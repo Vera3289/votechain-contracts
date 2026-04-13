@@ -1,0 +1,9 @@
+use soroban_sdk::{contracttype, Address};
+
+#[contracttype]
+pub enum TokenDataKey {
+    Balance(Address),
+    Allowance(Address, Address),
+    TotalSupply,
+    Admin,
+}
