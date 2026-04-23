@@ -75,9 +75,9 @@ impl GovernanceContract {
         assert!(weight > 0, "no voting power");
 
         match vote {
-            Vote::Yes     => proposal.votes_yes     += weight,
-            Vote::No      => proposal.votes_no      += weight,
-            Vote::Abstain => proposal.votes_abstain += weight,
+            Vote::Yes     => proposal.votes_yes     = proposal.votes_yes.checked_add(weight).expect("vote tally overflow"),
+            Vote::No      => proposal.votes_no      = proposal.votes_no.checked_add(weight).expect("vote tally overflow"),
+            Vote::Abstain => proposal.votes_abstain = proposal.votes_abstain.checked_add(weight).expect("vote tally overflow"),
         }
 
         mark_voted(&env, proposal_id, &voter);

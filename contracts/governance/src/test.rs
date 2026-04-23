@@ -167,6 +167,35 @@ fn test_cancel_proposal() {
     assert_eq!(client.get_proposal(&id).status, ProposalStatus::Cancelled);
 }
 
+/// SEC-002: verify checked_add panics on i128::MAX overflow
+#[test]
+#[should_panic(expected = "vote tally overflow")]
+fn test_vote_tally_overflow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let voter_a = Address::generate(&env);
+    let voter_b = Address::generate(&env);
+
+    // Give voter_a i128::MAX tokens and voter_b 1 token so the second vote overflows
+    let token_id = env.register(votechain_token::TokenContract, ());
+    let token = votechain_token::TokenContractClient::new(&env, &token_id);
+    token.initialize(&admin, &i128::MAX);
+    token.transfer(&admin, &voter_a, &i128::MAX);
+    // mint 1 more to voter_b (total supply exceeds i128::MAX — only possible in test env)
+    token.mint(&admin, &voter_b, &1);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &voter_a,
+        &String::from_str(&env, "Overflow test"),
+        &String::from_str(&env, "desc"),
+        &1,
+        &3600,
+    );
+    client.cast_vote(&voter_a, &id, &Vote::Yes); // fills tally to i128::MAX
+    client.cast_vote(&voter_b, &id, &Vote::Yes); // should panic: overflow
+}
+
 #[test]
 #[should_panic(expected = "already voted")]
 fn test_cannot_vote_twice() {
