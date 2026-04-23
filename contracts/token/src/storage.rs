@@ -1,5 +1,5 @@
 use soroban_sdk::{Env, Address};
-use crate::types::TokenDataKey;
+use crate::types::{ContractError, TokenDataKey};
 
 pub fn balance_of(env: &Env, owner: &Address) -> i128 {
     env.storage().persistent().get(&TokenDataKey::Balance(owner.clone())).unwrap_or(0)
@@ -19,8 +19,11 @@ pub fn total_supply(env: &Env) -> i128 {
 pub fn set_total_supply(env: &Env, s: i128) {
     env.storage().instance().set(&TokenDataKey::TotalSupply, &s);
 }
-pub fn get_admin(env: &Env) -> Address {
-    env.storage().instance().get(&TokenDataKey::Admin).expect("admin not set")
+pub fn get_admin(env: &Env) -> Result<Address, ContractError> {
+    env.storage()
+        .instance()
+        .get(&TokenDataKey::Admin)
+        .ok_or(ContractError::AdminNotSet)
 }
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&TokenDataKey::Admin, admin);

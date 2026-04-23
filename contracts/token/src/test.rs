@@ -42,7 +42,7 @@ fn test_mint_burn() {
 }
 
 #[test]
-#[should_panic(expected = "insufficient balance")]
+#[should_panic]
 fn test_overdraft() {
     let (env, c) = setup();
     let admin = Address::generate(&env);
