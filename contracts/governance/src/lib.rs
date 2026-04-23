@@ -12,7 +12,7 @@ use storage::{
     get_admin, get_voting_token, has_voted, load_proposal, mark_voted,
     next_id, save_proposal, set_admin, set_voting_token,
 };
-use types::{DataKey, Proposal, ProposalStatus, Vote};
+use types::{ContractError, DataKey, Proposal, ProposalStatus, Vote};
 
 #[contract]
 pub struct GovernanceContract;
@@ -25,7 +25,6 @@ impl GovernanceContract {
         set_voting_token(&env, &voting_token);
     }
 
-    /// Create a proposal. `duration` is seconds the vote stays open.
     pub fn create_proposal(
         env: Env,
         proposer: Address,
@@ -33,10 +32,10 @@ impl GovernanceContract {
         description: String,
         quorum: i128,
         duration: u64,
-    ) -> u64 {
+    ) -> Result<u64, ContractError> {
         proposer.require_auth();
-        assert!(quorum > 0, "quorum must be positive");
-        assert!(duration > 0, "duration must be positive");
+        if quorum <= 0 { return Err(ContractError::InvalidQuorum); }
+        if duration == 0 { return Err(ContractError::InvalidDuration); }
 
         let now = env.ledger().timestamp();
         let id = next_id(&env);
@@ -55,24 +54,24 @@ impl GovernanceContract {
         };
         save_proposal(&env, &proposal);
         events::proposal_created(&env, id, &proposer);
-        id
+        Ok(id)
     }
 
-    /// Cast a vote. Weight = voter's token balance at time of vote.
-    pub fn cast_vote(env: Env, voter: Address, proposal_id: u64, vote: Vote) {
+    pub fn cast_vote(env: Env, voter: Address, proposal_id: u64, vote: Vote) -> Result<(), ContractError> {
         voter.require_auth();
 
-        let mut proposal = load_proposal(&env, proposal_id).expect("proposal not found");
-        assert_eq!(proposal.status, ProposalStatus::Active, "proposal not active");
+        let mut proposal = load_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Active {
+            return Err(ContractError::ProposalNotActive);
+        }
 
         let now = env.ledger().timestamp();
-        assert!(now <= proposal.end_time, "voting period has ended");
-        assert!(!has_voted(&env, proposal_id, &voter), "already voted");
+        if now > proposal.end_time { return Err(ContractError::VotingPeriodEnded); }
+        if has_voted(&env, proposal_id, &voter) { return Err(ContractError::AlreadyVoted); }
 
-        // Token-weighted: weight = voter's balance
-        let token_client = token::Client::new(&env, &get_voting_token(&env));
+        let token_client = token::Client::new(&env, &get_voting_token(&env)?);
         let weight = token_client.balance(&voter);
-        assert!(weight > 0, "no voting power");
+        if weight <= 0 { return Err(ContractError::NoVotingPower); }
 
         match vote {
             Vote::Yes     => proposal.votes_yes     += weight,
@@ -83,13 +82,17 @@ impl GovernanceContract {
         mark_voted(&env, proposal_id, &voter);
         save_proposal(&env, &proposal);
         events::vote_cast(&env, proposal_id, &voter, &vote, weight);
+        Ok(())
     }
 
-    /// Finalise a proposal after its voting period ends.
-    pub fn finalise(env: Env, proposal_id: u64) {
-        let mut proposal = load_proposal(&env, proposal_id).expect("proposal not found");
-        assert_eq!(proposal.status, ProposalStatus::Active, "already finalised");
-        assert!(env.ledger().timestamp() > proposal.end_time, "voting still open");
+    pub fn finalise(env: Env, proposal_id: u64) -> Result<(), ContractError> {
+        let mut proposal = load_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Active {
+            return Err(ContractError::ProposalNotActive);
+        }
+        if env.ledger().timestamp() <= proposal.end_time {
+            return Err(ContractError::VotingStillOpen);
+        }
 
         let total = proposal.votes_yes + proposal.votes_no + proposal.votes_abstain;
         proposal.status = if total >= proposal.quorum && proposal.votes_yes > proposal.votes_no {
@@ -100,32 +103,37 @@ impl GovernanceContract {
 
         save_proposal(&env, &proposal);
         events::proposal_finalised(&env, proposal_id, &proposal.status);
+        Ok(())
     }
 
-    /// Admin marks a passed proposal as executed.
-    pub fn execute(env: Env, admin: Address, proposal_id: u64) {
+    pub fn execute(env: Env, admin: Address, proposal_id: u64) -> Result<(), ContractError> {
         admin.require_auth();
-        assert_eq!(get_admin(&env), admin, "not admin");
-        let mut proposal = load_proposal(&env, proposal_id).expect("proposal not found");
-        assert_eq!(proposal.status, ProposalStatus::Passed, "proposal not passed");
+        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
+        let mut proposal = load_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Passed {
+            return Err(ContractError::ProposalNotPassed);
+        }
         proposal.status = ProposalStatus::Executed;
         save_proposal(&env, &proposal);
         events::proposal_finalised(&env, proposal_id, &ProposalStatus::Executed);
+        Ok(())
     }
 
-    /// Admin cancels an active proposal.
-    pub fn cancel(env: Env, admin: Address, proposal_id: u64) {
+    pub fn cancel(env: Env, admin: Address, proposal_id: u64) -> Result<(), ContractError> {
         admin.require_auth();
-        assert_eq!(get_admin(&env), admin, "not admin");
-        let mut proposal = load_proposal(&env, proposal_id).expect("proposal not found");
-        assert_eq!(proposal.status, ProposalStatus::Active, "proposal not active");
+        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
+        let mut proposal = load_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Active {
+            return Err(ContractError::ProposalNotActive);
+        }
         proposal.status = ProposalStatus::Cancelled;
         save_proposal(&env, &proposal);
         events::proposal_finalised(&env, proposal_id, &ProposalStatus::Cancelled);
+        Ok(())
     }
 
-    pub fn get_proposal(env: Env, proposal_id: u64) -> Proposal {
-        load_proposal(&env, proposal_id).expect("proposal not found")
+    pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, ContractError> {
+        load_proposal(&env, proposal_id)
     }
 
     pub fn proposal_count(env: Env) -> u64 {
