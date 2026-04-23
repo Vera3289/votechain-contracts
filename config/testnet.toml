@@ -1,0 +1,9 @@
+# Stellar Testnet environment
+[network]
+name = "testnet"
+rpc_url = "https://soroban-testnet.stellar.org"
+network_passphrase = "Test SDF Network ; September 2015"
+
+[contracts]
+governance = ""
+token = ""
