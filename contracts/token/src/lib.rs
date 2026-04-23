@@ -1,5 +1,6 @@
 #![no_std]
 
+mod events;
 mod storage;
 mod types;
 
@@ -29,6 +30,7 @@ impl TokenContract {
         assert!(b >= amount, "insufficient balance");
         set_balance(&env, &from, b - amount);
         set_balance(&env, &to, balance_of(&env, &to) + amount);
+        events::transferred(&env, &from, &to, amount);
     }
     pub fn approve(env: Env, owner: Address, spender: Address, amount: i128) {
         owner.require_auth();
@@ -50,6 +52,7 @@ impl TokenContract {
         assert!(amount > 0, "amount must be positive");
         set_balance(&env, &to, balance_of(&env, &to) + amount);
         set_total_supply(&env, total_supply(&env) + amount);
+        events::minted(&env, &to, amount);
     }
     pub fn burn(env: Env, admin: Address, from: Address, amount: i128) {
         admin.require_auth();
@@ -58,5 +61,6 @@ impl TokenContract {
         assert!(b >= amount, "insufficient balance");
         set_balance(&env, &from, b - amount);
         set_total_supply(&env, total_supply(&env) - amount);
+        events::burned(&env, &from, amount);
     }
 }
