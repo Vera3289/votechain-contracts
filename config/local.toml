@@ -1,0 +1,9 @@
+# Local development environment
+[network]
+name = "local"
+rpc_url = "http://localhost:8000/soroban/rpc"
+network_passphrase = "Standalone Network ; February 2017"
+
+[contracts]
+governance = ""
+token = ""

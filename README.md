@@ -102,6 +102,36 @@ total_votes >= quorum  AND  votes_yes > votes_no
 
 ---
 
+## Environment Configuration
+
+Config files live in `config/` — one per environment:
+
+| File | Environment |
+|---|---|
+| `config/local.toml` | Local Stellar node (default) |
+| `config/testnet.toml` | Stellar Testnet |
+| `config/mainnet.toml` | Stellar Mainnet (no real values committed) |
+
+Each file contains the RPC URL, network passphrase, and deployed contract addresses.
+
+**Switching environments** — set the `NETWORK` variable before running deploy scripts:
+
+```bash
+# Local (default)
+./scripts/deploy.sh
+
+# Testnet
+NETWORK=testnet ./scripts/deploy.sh
+
+# Mainnet — fill in contract addresses in config/mainnet.toml first
+NETWORK=mainnet ./scripts/deploy.sh
+```
+
+> **Security**: `config/mainnet.toml` is committed with placeholder values only.  
+> Never commit real contract addresses or private keys.
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
