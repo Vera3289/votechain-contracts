@@ -1,4 +1,35 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracterror, contracttype, Address, String};
+
+/// All revert conditions for the governance contract.
+#[contracterror]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum ContractError {
+    /// 1 – Admin address is not set
+    AdminNotSet = 1,
+    /// 2 – Caller is not the admin
+    NotAdmin = 2,
+    /// 3 – Voting token address is not set
+    VotingTokenNotSet = 3,
+    /// 4 – Quorum must be greater than zero
+    InvalidQuorum = 4,
+    /// 5 – Duration must be greater than zero
+    InvalidDuration = 5,
+    /// 6 – Proposal with the given ID does not exist
+    ProposalNotFound = 6,
+    /// 7 – Proposal is not in Active status
+    ProposalNotActive = 7,
+    /// 8 – Voting period has already ended
+    VotingPeriodEnded = 8,
+    /// 9 – Voting period has not ended yet
+    VotingStillOpen = 9,
+    /// 10 – Voter has already cast a vote on this proposal
+    AlreadyVoted = 10,
+    /// 11 – Voter has no token balance (no voting power)
+    NoVotingPower = 11,
+    /// 12 – Proposal has not passed
+    ProposalNotPassed = 12,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]

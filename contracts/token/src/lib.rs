@@ -8,6 +8,7 @@ mod test;
 
 use soroban_sdk::{contract, contractimpl, Address, Env};
 use storage::*;
+use types::ContractError;
 
 #[contract]
 pub struct TokenContract;
@@ -20,43 +21,54 @@ impl TokenContract {
         set_balance(&env, &admin, initial_supply);
         set_total_supply(&env, initial_supply);
     }
+
     pub fn total_supply(env: Env) -> i128 { total_supply(&env) }
+
     pub fn balance(env: Env, owner: Address) -> i128 { balance_of(&env, &owner) }
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), ContractError> {
         from.require_auth();
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 { return Err(ContractError::InvalidAmount); }
         let b = balance_of(&env, &from);
-        assert!(b >= amount, "insufficient balance");
+        if b < amount { return Err(ContractError::InsufficientBalance); }
         set_balance(&env, &from, b - amount);
         set_balance(&env, &to, balance_of(&env, &to) + amount);
+        Ok(())
     }
+
     pub fn approve(env: Env, owner: Address, spender: Address, amount: i128) {
         owner.require_auth();
         set_allowance(&env, &owner, &spender, amount);
     }
-    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
+
+    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) -> Result<(), ContractError> {
         spender.require_auth();
         let allowed = allowance(&env, &from, &spender);
-        assert!(allowed >= amount, "allowance exceeded");
+        if allowed < amount { return Err(ContractError::AllowanceExceeded); }
         let b = balance_of(&env, &from);
-        assert!(b >= amount, "insufficient balance");
+        if b < amount { return Err(ContractError::InsufficientBalance); }
         set_allowance(&env, &from, &spender, allowed - amount);
         set_balance(&env, &from, b - amount);
         set_balance(&env, &to, balance_of(&env, &to) + amount);
+        Ok(())
     }
-    pub fn mint(env: Env, admin: Address, to: Address, amount: i128) {
+
+    pub fn mint(env: Env, admin: Address, to: Address, amount: i128) -> Result<(), ContractError> {
         admin.require_auth();
-        assert_eq!(get_admin(&env), admin, "not admin");
-        assert!(amount > 0, "amount must be positive");
+        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
+        if amount <= 0 { return Err(ContractError::InvalidAmount); }
         set_balance(&env, &to, balance_of(&env, &to) + amount);
         set_total_supply(&env, total_supply(&env) + amount);
+        Ok(())
     }
-    pub fn burn(env: Env, admin: Address, from: Address, amount: i128) {
+
+    pub fn burn(env: Env, admin: Address, from: Address, amount: i128) -> Result<(), ContractError> {
         admin.require_auth();
-        assert_eq!(get_admin(&env), admin, "not admin");
+        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
         let b = balance_of(&env, &from);
-        assert!(b >= amount, "insufficient balance");
+        if b < amount { return Err(ContractError::InsufficientBalance); }
         set_balance(&env, &from, b - amount);
         set_total_supply(&env, total_supply(&env) - amount);
+        Ok(())
     }
 }
