@@ -186,3 +186,151 @@ fn test_cannot_vote_twice() {
     client.cast_vote(&voter, &id, &Vote::Yes);
     client.cast_vote(&voter, &id, &Vote::No); // should panic
 }
+
+// ── TEST-002: create_proposal unit tests ─────────────────────────────────────
+
+#[test]
+fn test_create_proposal_stores_fields_correctly() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "My Title"),
+        &String::from_str(&env, "My Description"),
+        &200,
+        &7200,
+    );
+
+    let p = client.get_proposal(&id);
+    assert_eq!(p.id, id);
+    assert_eq!(p.proposer, proposer);
+    assert_eq!(p.quorum, 200);
+    assert_eq!(p.status, ProposalStatus::Active);
+    assert_eq!(p.votes_yes, 0);
+    assert_eq!(p.votes_no, 0);
+    assert_eq!(p.votes_abstain, 0);
+}
+
+#[test]
+fn test_create_proposal_id_increments() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    let id1 = client.create_proposal(&proposer, &String::from_str(&env, "P1"), &String::from_str(&env, "d"), &1, &60);
+    let id2 = client.create_proposal(&proposer, &String::from_str(&env, "P2"), &String::from_str(&env, "d"), &1, &60);
+    let id3 = client.create_proposal(&proposer, &String::from_str(&env, "P3"), &String::from_str(&env, "d"), &1, &60);
+
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+    assert_eq!(id3, 3);
+    assert_eq!(client.proposal_count(), 3);
+}
+
+#[test]
+fn test_create_proposal_emits_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Event Test"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+
+    // proposal_created publishes ("created", id) topic with proposer as data
+    let events = env.events().all();
+    assert!(!events.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "title cannot be empty")]
+fn test_create_proposal_empty_title_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id);
+    client.create_proposal(&proposer, &String::from_str(&env, ""), &String::from_str(&env, "desc"), &100, &3600);
+}
+
+#[test]
+#[should_panic(expected = "description cannot be empty")]
+fn test_create_proposal_empty_description_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id);
+    client.create_proposal(&proposer, &String::from_str(&env, "Title"), &String::from_str(&env, ""), &100, &3600);
+}
+
+#[test]
+#[should_panic(expected = "title too long")]
+fn test_create_proposal_title_exceeds_max_length_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id);
+    // 65-character title
+    let long_title = String::from_str(&env, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    client.create_proposal(&proposer, &long_title, &String::from_str(&env, "desc"), &100, &3600);
+}
+
+#[test]
+#[should_panic(expected = "description too long")]
+fn test_create_proposal_description_exceeds_max_length_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id);
+    // 257-character description
+    let long_desc = String::from_str(&env, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    client.create_proposal(&proposer, &String::from_str(&env, "Title"), &long_desc, &100, &3600);
+}
+
+#[test]
+#[should_panic(expected = "quorum must be positive")]
+fn test_create_proposal_zero_quorum_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id);
+    client.create_proposal(&proposer, &String::from_str(&env, "Title"), &String::from_str(&env, "desc"), &0, &3600);
+}
+
+#[test]
+#[should_panic(expected = "duration out of bounds")]
+fn test_create_proposal_duration_too_short_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id);
+    client.create_proposal(&proposer, &String::from_str(&env, "Title"), &String::from_str(&env, "desc"), &100, &59);
+}
+
+#[test]
+#[should_panic(expected = "duration out of bounds")]
+fn test_create_proposal_duration_too_long_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id);
+    client.create_proposal(&proposer, &String::from_str(&env, "Title"), &String::from_str(&env, "desc"), &100, &31_536_001);
+}

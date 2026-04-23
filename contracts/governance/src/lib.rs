@@ -35,8 +35,12 @@ impl GovernanceContract {
         duration: u64,
     ) -> u64 {
         proposer.require_auth();
+        assert!(title.len() > 0, "title cannot be empty");
+        assert!(description.len() > 0, "description cannot be empty");
+        assert!(title.len() <= 64, "title too long");
+        assert!(description.len() <= 256, "description too long");
         assert!(quorum > 0, "quorum must be positive");
-        assert!(duration > 0, "duration must be positive");
+        assert!(duration >= 60 && duration <= 31_536_000, "duration out of bounds");
 
         let now = env.ledger().timestamp();
         let id = next_id(&env);
