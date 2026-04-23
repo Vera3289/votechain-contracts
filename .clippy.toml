@@ -1,0 +1,8 @@
+# Clippy configuration for votechain-contracts
+# All warnings are treated as errors via `-- -D warnings` in CI
+
+# Enforce a reasonable cognitive complexity limit
+cognitive-complexity-threshold = 10
+
+# Allow up to 5 function arguments before suggesting a struct
+too-many-arguments-threshold = 5
