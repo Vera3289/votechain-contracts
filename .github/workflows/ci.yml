@@ -27,6 +27,19 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: Update advisory database
+        run: cargo audit fetch
+      - name: Run cargo audit
+        run: cargo audit --deny warnings
+
   build-wasm:
     name: Build WASM
     runs-on: ubuntu-latest
