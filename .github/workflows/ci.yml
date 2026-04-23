@@ -45,6 +45,37 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
       - run: stellar contract build
+      - name: Check WASM binary sizes
+        run: |
+          WASM_DIR="target/wasm32-unknown-unknown/release"
+          GOV_WASM="$WASM_DIR/votechain_governance.wasm"
+          TOK_WASM="$WASM_DIR/votechain_token.wasm"
+          GOV_LIMIT=$((100 * 1024))   # 100 KB
+          TOK_LIMIT=$((50 * 1024))    # 50 KB
+
+          gov_size=$(stat -c%s "$GOV_WASM")
+          tok_size=$(stat -c%s "$TOK_WASM")
+
+          echo "governance.wasm : $gov_size bytes (limit: $GOV_LIMIT)"
+          echo "token.wasm      : $tok_size bytes (limit: $TOK_LIMIT)"
+
+          # Write size log artifact
+          mkdir -p wasm-size-history
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) governance=$gov_size token=$tok_size" \
+            >> wasm-size-history/sizes.log
+
+          if [ "$gov_size" -gt "$GOV_LIMIT" ]; then
+            echo "ERROR: governance.wasm ($gov_size bytes) exceeds 100 KB limit" >&2
+            exit 1
+          fi
+          if [ "$tok_size" -gt "$TOK_LIMIT" ]; then
+            echo "ERROR: token.wasm ($tok_size bytes) exceeds 50 KB limit" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-size-history
+          path: wasm-size-history/sizes.log
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-contracts
