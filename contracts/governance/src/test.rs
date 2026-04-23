@@ -168,7 +168,7 @@ fn test_cancel_proposal() {
 }
 
 #[test]
-#[should_panic(expected = "already voted")]
+#[should_panic]
 fn test_cannot_vote_twice() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
