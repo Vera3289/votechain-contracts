@@ -186,3 +186,82 @@ fn test_cannot_vote_twice() {
     client.cast_vote(&voter, &id, &Vote::Yes);
     client.cast_vote(&voter, &id, &Vote::No); // should panic
 }
+
+// ── TEST-013: access control negative tests ───────────────────────────────────
+
+/// Helper: create a passed proposal ready for execute/cancel tests.
+fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
+    let voter = Address::generate(env);
+    let token_id = setup_token(env, &voter);
+    client.initialize(admin, &token_id);
+    let id = client.create_proposal(
+        &voter,
+        &String::from_str(env, "Prop"),
+        &String::from_str(env, "desc"),
+        &100,
+        &3600,
+    );
+    client.cast_vote(&voter, &id, &Vote::Yes);
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+    client.finalise(&id);
+    id
+}
+
+/// Helper: create an active proposal.
+fn setup_active_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
+    let proposer = Address::generate(env);
+    let token_id = setup_token(env, admin);
+    client.initialize(admin, &token_id);
+    client.create_proposal(
+        &proposer,
+        &String::from_str(env, "Prop"),
+        &String::from_str(env, "desc"),
+        &100,
+        &3600,
+    )
+}
+
+// ── execute: non-admin caller ─────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "not admin")]
+fn test_execute_non_admin_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let id = setup_passed_proposal(&env, &client, &admin);
+    client.execute(&non_admin, &id);
+}
+
+#[test]
+#[should_panic(expected = "not admin")]
+fn test_execute_zero_address_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let id = setup_passed_proposal(&env, &client, &admin);
+    // All-zero Stellar account (32 zero bytes) acts as the "zero address"
+    let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+    client.execute(&zero, &id);
+}
+
+// ── cancel: non-admin caller ──────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "not admin")]
+fn test_cancel_non_admin_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let id = setup_active_proposal(&env, &client, &admin);
+    client.cancel(&non_admin, &id);
+}
+
+#[test]
+#[should_panic(expected = "not admin")]
+fn test_cancel_zero_address_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let id = setup_active_proposal(&env, &client, &admin);
+    let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+    client.cancel(&zero, &id);
+}
