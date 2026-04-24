@@ -11,7 +11,7 @@ pub mod test_helpers;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
-    get_admin, get_voting_token, has_voted, load_proposal, mark_voted,
+    get_admin, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
     next_id, save_proposal, set_admin, set_voting_token,
 };
 use types::{ContractError, DataKey, Proposal, ProposalStatus, Vote};
@@ -21,10 +21,12 @@ pub struct GovernanceContract;
 
 #[contractimpl]
 impl GovernanceContract {
-    pub fn initialize(env: Env, admin: Address, voting_token: Address) {
+    pub fn initialize(env: Env, admin: Address, voting_token: Address) -> Result<(), ContractError> {
+        if is_initialized(&env) { return Err(ContractError::AlreadyInitialized); }
         admin.require_auth();
         set_admin(&env, &admin);
         set_voting_token(&env, &voting_token);
+        Ok(())
     }
 
     pub fn create_proposal(

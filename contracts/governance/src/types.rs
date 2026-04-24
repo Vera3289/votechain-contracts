@@ -29,6 +29,8 @@ pub enum ContractError {
     NoVotingPower = 11,
     /// 12 – Proposal has not passed
     ProposalNotPassed = 12,
+    /// 13 – Contract has already been initialized
+    AlreadyInitialized = 13,
 }
 
 #[contracttype]

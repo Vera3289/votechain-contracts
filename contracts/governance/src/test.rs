@@ -4,7 +4,7 @@ use super::*;
 use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env, String};
 use crate::test_helpers::{setup_env, create_test_proposal, mint_and_vote};
 
-// ── local helpers still needed for specific setup shapes ─────────────────────
+// ── local helpers for tests that need a custom Env/client shape ───────────────
 
 /// Register a fresh token contract, mint `supply` to `admin`, return its address.
 fn setup_token(env: &Env, admin: &Address) -> Address {
@@ -12,6 +12,10 @@ fn setup_token(env: &Env, admin: &Address) -> Address {
     let t = votechain_token::TokenContractClient::new(env, &id);
     t.initialize(admin, &1_000_000);
     id
+}
+
+fn new_client(env: &Env) -> GovernanceContractClient<'static> {
+    GovernanceContractClient::new(env, &env.register(GovernanceContract, ()))
 }
 
 /// Create a passed proposal (voted Yes, finalised) for access-control tests.
@@ -77,7 +81,6 @@ fn test_cast_vote_and_finalise_passed() {
 fn test_finalise_rejected_below_quorum() {
     let t = setup_env();
     let voter = Address::generate(&t.env);
-    // quorum higher than total supply — create manually
     let id = t.client.create_proposal(
         &voter,
         &String::from_str(&t.env, "B"),
@@ -123,7 +126,7 @@ fn test_cancel_proposal() {
     assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Cancelled);
 }
 
-// ── TEST-009: Concurrent proposal scenario tests ──────────────────────────────
+// ── TEST-009: concurrent proposal scenario tests ──────────────────────────────
 
 #[test]
 fn test_concurrent_proposals_independent_votes() {
@@ -197,8 +200,7 @@ fn test_proposals_at_different_lifecycle_stages() {
     let rejected_id  = t.client.create_proposal(&voter, &String::from_str(&t.env, "Rejected"), &String::from_str(&t.env, "d"), &9_999_999, &3600);
     let cancelled_id = create_test_proposal(&t, &voter);
 
-    mint_and_vote(&t, &voter, passed_id,   Vote::Yes, 1_000_000);
-    mint_and_vote(&t, &voter, rejected_id, Vote::Yes, 0); // no extra tokens needed — voter already has none after minting above
+    mint_and_vote(&t, &voter, passed_id, Vote::Yes, 1_000_000);
     t.client.cancel(&t.admin, &cancelled_id);
 
     t.env.ledger().with_mut(|l| l.timestamp += 3601);
@@ -230,7 +232,7 @@ fn test_cannot_vote_twice() {
 fn test_execute_non_admin_reverts() {
     let env = Env::default();
     env.mock_all_auths();
-    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let non_admin = Address::generate(&env);
     let id = setup_passed_proposal(&env, &client, &admin);
@@ -242,7 +244,7 @@ fn test_execute_non_admin_reverts() {
 fn test_execute_zero_address_reverts() {
     let env = Env::default();
     env.mock_all_auths();
-    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let id = setup_passed_proposal(&env, &client, &admin);
     let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
@@ -254,7 +256,7 @@ fn test_execute_zero_address_reverts() {
 fn test_cancel_non_admin_reverts() {
     let env = Env::default();
     env.mock_all_auths();
-    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let non_admin = Address::generate(&env);
     let id = setup_active_proposal(&env, &client, &admin);
@@ -266,12 +268,14 @@ fn test_cancel_non_admin_reverts() {
 fn test_cancel_zero_address_reverts() {
     let env = Env::default();
     env.mock_all_auths();
-    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let id = setup_active_proposal(&env, &client, &admin);
     let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
     client.cancel(&zero, &id);
 }
+
+// ── end TEST-013 ──────────────────────────────────────────────────────────────
 
 // ── SC-027: update_quorum tests ───────────────────────────────────────────────
 
@@ -312,7 +316,7 @@ fn test_update_quorum_inactive_proposal_reverts() {
 
 // ── end SC-027 ────────────────────────────────────────────────────────────────
 
-// ── Storage persistence tests ─────────────────────────────────────────────────
+// ── storage persistence tests ─────────────────────────────────────────────────
 
 #[test]
 fn test_proposal_data_persists_unchanged() {
@@ -387,3 +391,34 @@ fn test_no_data_lost_between_calls() {
 }
 
 // ── end storage persistence tests ─────────────────────────────────────────────
+
+// ── SEC-009: re-initialization guard tests ────────────────────────────────────
+
+/// Re-init by the original admin must revert with AlreadyInitialized.
+#[test]
+#[should_panic]
+fn test_reinit_by_original_admin_reverts() {
+    let t = setup_env();
+    t.client.initialize(&t.admin, &t.token_id);
+}
+
+/// Re-init by a new address must revert with AlreadyInitialized.
+#[test]
+#[should_panic]
+fn test_reinit_by_new_address_reverts() {
+    let t = setup_env();
+    let attacker = Address::generate(&t.env);
+    let new_token = Address::generate(&t.env);
+    t.client.initialize(&attacker, &new_token);
+}
+
+/// Re-init by the zero address must revert with AlreadyInitialized.
+#[test]
+#[should_panic]
+fn test_reinit_by_zero_address_reverts() {
+    let t = setup_env();
+    let zero = Address::from_str(&t.env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+    t.client.initialize(&zero, &t.token_id);
+}
+
+// ── end SEC-009 ───────────────────────────────────────────────────────────────
