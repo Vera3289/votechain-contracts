@@ -140,6 +140,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 See [SECURITY.md](SECURITY.md).
 
+## Architecture Decision Records
+
+Key architectural decisions are documented in [`docs/adr/`](docs/adr/README.md).
+
+| ADR | Decision |
+|-----|----------|
+| [ADR-001](docs/adr/ADR-001-stellar-soroban-platform.md) | Use Stellar Soroban as the smart contract platform |
+| [ADR-002](docs/adr/ADR-002-token-weighted-voting.md) | Token-weighted voting model |
+| [ADR-003](docs/adr/ADR-003-live-balance-over-snapshot.md) | Use live token balance instead of vote snapshots |
+| [ADR-004](docs/adr/ADR-004-three-way-vote.md) | Three-way vote: Yes / No / Abstain |
+| [ADR-005](docs/adr/ADR-005-on-chain-events.md) | Emit on-chain events for all state transitions |
+
 ## License
 
 [Apache 2.0](LICENSE)
