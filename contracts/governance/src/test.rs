@@ -380,3 +380,82 @@ fn test_cancel_zero_address_reverts() {
     let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
     client.cancel(&zero, &id);
 }
+
+// ── SC-027: update_quorum tests ───────────────────────────────────────────────
+
+#[test]
+fn test_update_quorum_success() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "P"),
+        &String::from_str(&env, "d"),
+        &100,
+        &3600,
+    );
+    client.update_quorum(&admin, &id, &500);
+    assert_eq!(client.get_proposal(&id).quorum, 500);
+}
+
+#[test]
+#[should_panic(expected = "not admin")]
+fn test_update_quorum_non_admin_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &admin,
+        &String::from_str(&env, "P"),
+        &String::from_str(&env, "d"),
+        &100,
+        &3600,
+    );
+    client.update_quorum(&non_admin, &id, &500);
+}
+
+#[test]
+#[should_panic]
+fn test_update_quorum_zero_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &admin,
+        &String::from_str(&env, "P"),
+        &String::from_str(&env, "d"),
+        &100,
+        &3600,
+    );
+    client.update_quorum(&admin, &id, &0);
+}
+
+#[test]
+#[should_panic]
+fn test_update_quorum_inactive_proposal_reverts() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &admin,
+        &String::from_str(&env, "P"),
+        &String::from_str(&env, "d"),
+        &100,
+        &3600,
+    );
+    client.cancel(&admin, &id);
+    client.update_quorum(&admin, &id, &500); // must panic: ProposalNotActive
+}
+
+// ── end SC-027 ────────────────────────────────────────────────────────────────
