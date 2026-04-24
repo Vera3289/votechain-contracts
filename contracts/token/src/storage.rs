@@ -28,3 +28,13 @@ pub fn get_admin(env: &Env) -> Result<Address, ContractError> {
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&TokenDataKey::Admin, admin);
 }
+
+/// Stores the contract version as a `(major, minor, patch)` tuple.
+pub fn set_version(env: &Env, version: (u32, u32, u32)) {
+    env.storage().instance().set(&TokenDataKey::Version, &version);
+}
+
+/// Returns the stored contract version as a `(major, minor, patch)` tuple.
+pub fn get_version(env: &Env) -> (u32, u32, u32) {
+    env.storage().instance().get(&TokenDataKey::Version).unwrap_or((0, 0, 0))
+}

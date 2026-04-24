@@ -11,8 +11,8 @@ pub mod test_helpers;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
-    get_admin, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
-    next_id, save_proposal, set_admin, set_voting_token,
+    get_admin, get_version, get_voting_token, has_voted, is_initialized, load_proposal,
+    mark_voted, next_id, save_proposal, set_admin, set_version, set_voting_token,
 };
 use types::{ContractError, DataKey, Proposal, ProposalStatus, Vote};
 
@@ -26,6 +26,7 @@ impl GovernanceContract {
         admin.require_auth();
         set_admin(&env, &admin);
         set_voting_token(&env, &voting_token);
+        set_version(&env, (1, 0, 0));
         Ok(())
     }
 
@@ -160,5 +161,10 @@ impl GovernanceContract {
 
     pub fn has_voted(env: Env, proposal_id: u64, voter: Address) -> bool {
         has_voted(&env, proposal_id, &voter)
+    }
+
+    /// Returns the contract version as a `(major, minor, patch)` semver tuple.
+    pub fn get_version(env: Env) -> (u32, u32, u32) {
+        get_version(&env)
     }
 }

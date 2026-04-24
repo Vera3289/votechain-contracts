@@ -54,3 +54,13 @@ pub fn has_voted(env: &Env, proposal_id: u64, voter: &Address) -> bool {
         .get(&DataKey::HasVoted(proposal_id, voter.clone()))
         .unwrap_or(false)
 }
+
+/// Stores the contract version as a `(major, minor, patch)` tuple.
+pub fn set_version(env: &Env, version: (u32, u32, u32)) {
+    env.storage().instance().set(&DataKey::Version, &version);
+}
+
+/// Returns the stored contract version as a `(major, minor, patch)` tuple.
+pub fn get_version(env: &Env) -> (u32, u32, u32) {
+    env.storage().instance().get(&DataKey::Version).unwrap_or((0, 0, 0))
+}
