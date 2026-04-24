@@ -136,6 +136,23 @@ NETWORK=mainnet ./scripts/deploy.sh
 
 Common questions about VoteChain, Soroban, voting mechanics, token requirements, and proposal creation are answered in [docs/faq.md](docs/faq.md).
 
+## API Documentation
+
+Every public function in both contracts is documented with `///` doc comments (description, parameters, return value, and errors).
+
+Generate and open the docs locally:
+
+```bash
+cargo doc --no-deps --open
+```
+
+The rendered HTML is written to `target/doc/`. Start with:
+
+- `target/doc/votechain_governance/struct.GovernanceContract.html`
+- `target/doc/votechain_token/struct.TokenContract.html`
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
