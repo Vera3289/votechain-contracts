@@ -132,6 +132,10 @@ NETWORK=mainnet ./scripts/deploy.sh
 
 ---
 
+## FAQ
+
+Common questions about VoteChain, Soroban, voting mechanics, token requirements, and proposal creation are answered in [docs/faq.md](docs/faq.md).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
