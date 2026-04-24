@@ -6,6 +6,7 @@ use crate::test_helpers::{setup_env, create_test_proposal, mint_and_vote};
 
 // ── local helpers for tests that need a custom Env/client shape ───────────────
 
+/// Register a fresh token contract, mint `supply` to `admin`, return its address.
 fn setup_token(env: &Env, admin: &Address) -> Address {
     let id = env.register(votechain_token::TokenContract, ());
     let t = votechain_token::TokenContractClient::new(env, &id);
