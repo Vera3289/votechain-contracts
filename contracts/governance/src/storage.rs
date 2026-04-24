@@ -22,6 +22,10 @@ pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
 }
 
+pub fn is_initialized(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::Admin)
+}
+
 pub fn get_admin(env: &Env) -> Result<Address, ContractError> {
     env.storage()
         .instance()
