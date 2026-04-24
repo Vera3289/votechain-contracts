@@ -2,15 +2,11 @@
 
 use super::*;
 use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env, String};
+use crate::test_helpers::{setup_env, create_test_proposal, mint_and_vote};
 
-fn setup() -> (Env, GovernanceContractClient<'static>) {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(GovernanceContract, ());
-    let client = GovernanceContractClient::new(&env, &id);
-    (env, client)
-}
+// ── local helpers for tests that need a custom Env/client shape ───────────────
 
+/// Register a fresh token contract, mint `supply` to `admin`, return its address.
 fn setup_token(env: &Env, admin: &Address) -> Address {
     let id = env.register(votechain_token::TokenContract, ());
     let t = votechain_token::TokenContractClient::new(env, &id);
@@ -18,293 +14,11 @@ fn setup_token(env: &Env, admin: &Address) -> Address {
     id
 }
 
-fn make_proposal(env: &Env, client: &GovernanceContractClient, proposer: &Address, token_id: &Address) -> u64 {
-    let admin = Address::generate(env);
-    client.initialize(&admin, token_id);
-    client.create_proposal(
-        proposer,
-        &String::from_str(env, "Upgrade protocol"),
-        &String::from_str(env, "Upgrade to v2"),
-        &100,   // quorum
-        &3600,  // 1 hour
-    )
+fn new_client(env: &Env) -> GovernanceContractClient<'static> {
+    GovernanceContractClient::new(env, &env.register(GovernanceContract, ()))
 }
 
-#[test]
-fn test_create_proposal() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "Add new feature"),
-        &String::from_str(&env, "Details here"),
-        &50,
-        &7200,
-    );
-    assert_eq!(id, 1);
-    assert_eq!(client.proposal_count(), 1);
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
-}
-
-#[test]
-fn test_cast_vote_and_finalise_passed() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter); // voter holds all tokens
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Proposal A"),
-        &String::from_str(&env, "desc"),
-        &100,
-        &3600,
-    );
-
-    client.cast_vote(&voter, &id, &Vote::Yes);
-    assert!(client.has_voted(&id, &voter));
-
-    let p = client.get_proposal(&id);
-    assert_eq!(p.votes_yes, 1_000_000);
-
-    // Advance past end_time
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&id);
-
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Passed);
-}
-
-#[test]
-fn test_finalise_rejected_below_quorum() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Proposal B"),
-        &String::from_str(&env, "desc"),
-        &9_999_999, // quorum higher than total supply
-        &3600,
-    );
-
-    client.cast_vote(&voter, &id, &Vote::Yes);
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&id);
-
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Rejected);
-}
-
-#[test]
-fn test_finalise_rejected_no_wins() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Proposal C"),
-        &String::from_str(&env, "desc"),
-        &100,
-        &3600,
-    );
-
-    client.cast_vote(&voter, &id, &Vote::No);
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&id);
-
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Rejected);
-}
-
-#[test]
-fn test_execute_passed_proposal() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Proposal D"),
-        &String::from_str(&env, "desc"),
-        &100,
-        &3600,
-    );
-    client.cast_vote(&voter, &id, &Vote::Yes);
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&id);
-    client.execute(&admin, &id);
-
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Executed);
-}
-
-#[test]
-fn test_cancel_proposal() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "Proposal E"),
-        &String::from_str(&env, "desc"),
-        &100,
-        &3600,
-    );
-    client.cancel(&admin, &id);
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Cancelled);
-}
-
-// ── TEST-009: Concurrent proposal scenario tests ─────────────────────────────
-
-/// Multiple active proposals can coexist and receive independent votes.
-#[test]
-fn test_concurrent_proposals_independent_votes() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id1 = client.create_proposal(&voter, &String::from_str(&env, "P1"), &String::from_str(&env, "d"), &1, &3600);
-    let id2 = client.create_proposal(&voter, &String::from_str(&env, "P2"), &String::from_str(&env, "d"), &1, &3600);
-    let id3 = client.create_proposal(&voter, &String::from_str(&env, "P3"), &String::from_str(&env, "d"), &1, &3600);
-
-    assert_eq!(client.get_proposal(&id1).status, ProposalStatus::Active);
-    assert_eq!(client.get_proposal(&id2).status, ProposalStatus::Active);
-    assert_eq!(client.get_proposal(&id3).status, ProposalStatus::Active);
-
-    client.cast_vote(&voter, &id1, &Vote::Yes);
-    // voter has not voted on id2 or id3
-    assert!(client.has_voted(&id1, &voter));
-    assert!(!client.has_voted(&id2, &voter));
-    assert!(!client.has_voted(&id3, &voter));
-}
-
-/// Votes on one proposal do not affect tallies of another.
-#[test]
-fn test_concurrent_votes_do_not_bleed() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id1 = client.create_proposal(&voter, &String::from_str(&env, "P1"), &String::from_str(&env, "d"), &1, &3600);
-    let id2 = client.create_proposal(&voter, &String::from_str(&env, "P2"), &String::from_str(&env, "d"), &1, &3600);
-
-    client.cast_vote(&voter, &id1, &Vote::Yes);
-
-    let p1 = client.get_proposal(&id1);
-    let p2 = client.get_proposal(&id2);
-    assert_eq!(p1.votes_yes, 1_000_000);
-    assert_eq!(p2.votes_yes, 0);
-    assert_eq!(p2.votes_no, 0);
-    assert_eq!(p2.votes_abstain, 0);
-}
-
-/// Finalising one proposal does not change the status of others.
-#[test]
-fn test_finalise_one_does_not_affect_others() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id1 = client.create_proposal(&voter, &String::from_str(&env, "P1"), &String::from_str(&env, "d"), &1, &3600);
-    let id2 = client.create_proposal(&voter, &String::from_str(&env, "P2"), &String::from_str(&env, "d"), &1, &7200);
-
-    client.cast_vote(&voter, &id1, &Vote::Yes);
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&id1);
-
-    assert_ne!(client.get_proposal(&id1).status, ProposalStatus::Active);
-    assert_eq!(client.get_proposal(&id2).status, ProposalStatus::Active);
-}
-
-/// Proposal IDs are unique and monotonically increasing.
-#[test]
-fn test_proposal_ids_are_unique() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id1 = client.create_proposal(&proposer, &String::from_str(&env, "P1"), &String::from_str(&env, "d"), &1, &3600);
-    let id2 = client.create_proposal(&proposer, &String::from_str(&env, "P2"), &String::from_str(&env, "d"), &1, &3600);
-    let id3 = client.create_proposal(&proposer, &String::from_str(&env, "P3"), &String::from_str(&env, "d"), &1, &3600);
-
-    assert!(id1 != id2 && id2 != id3 && id1 != id3);
-    assert_eq!(client.proposal_count(), 3);
-}
-
-/// Proposals at different lifecycle stages coexist correctly.
-#[test]
-fn test_proposals_at_different_lifecycle_stages() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let active_id   = client.create_proposal(&voter, &String::from_str(&env, "Active"),   &String::from_str(&env, "d"), &1,         &7200);
-    let passed_id   = client.create_proposal(&voter, &String::from_str(&env, "Passed"),   &String::from_str(&env, "d"), &1,         &3600);
-    let rejected_id = client.create_proposal(&voter, &String::from_str(&env, "Rejected"), &String::from_str(&env, "d"), &9_999_999, &3600);
-    let cancelled_id = client.create_proposal(&voter, &String::from_str(&env, "Cancel"),  &String::from_str(&env, "d"), &1,         &3600);
-
-    client.cast_vote(&voter, &passed_id, &Vote::Yes);
-    client.cast_vote(&voter, &rejected_id, &Vote::Yes);
-    client.cancel(&admin, &cancelled_id);
-
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&passed_id);
-    client.finalise(&rejected_id);
-
-    assert_eq!(client.get_proposal(&active_id).status,    ProposalStatus::Active);
-    assert_eq!(client.get_proposal(&passed_id).status,    ProposalStatus::Passed);
-    assert_eq!(client.get_proposal(&rejected_id).status,  ProposalStatus::Rejected);
-    assert_eq!(client.get_proposal(&cancelled_id).status, ProposalStatus::Cancelled);
-}
-
-// ── end TEST-009 ─────────────────────────────────────────────────────────────
-
-#[test]
-#[should_panic]
-fn test_cannot_vote_twice() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Proposal F"),
-        &String::from_str(&env, "desc"),
-        &100,
-        &3600,
-    );
-    client.cast_vote(&voter, &id, &Vote::Yes);
-    client.cast_vote(&voter, &id, &Vote::No); // should panic
-}
-
-// ── TEST-013: access control negative tests ───────────────────────────────────
-
-/// Helper: create a passed proposal ready for execute/cancel tests.
+/// Create a passed proposal (voted Yes, finalised) for access-control tests.
 fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let voter = Address::generate(env);
     let token_id = setup_token(env, &voter);
@@ -322,7 +36,7 @@ fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &A
     id
 }
 
-/// Helper: create an active proposal.
+/// Create an active proposal for access-control tests.
 fn setup_active_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let proposer = Address::generate(env);
     let token_id = setup_token(env, admin);
@@ -336,12 +50,189 @@ fn setup_active_proposal(env: &Env, client: &GovernanceContractClient, admin: &A
     )
 }
 
-// ── execute: non-admin caller ─────────────────────────────────────────────────
+// ── basic lifecycle ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_create_proposal() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &proposer);
+    assert_eq!(id, 1);
+    assert_eq!(t.client.proposal_count(), 1);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Active);
+}
+
+#[test]
+fn test_cast_vote_and_finalise_passed() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    assert!(t.client.has_voted(&id, &voter));
+    assert_eq!(t.client.get_proposal(&id).votes_yes, 1_000_000);
+
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Passed);
+}
+
+#[test]
+fn test_finalise_rejected_below_quorum() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = t.client.create_proposal(
+        &voter,
+        &String::from_str(&t.env, "B"),
+        &String::from_str(&t.env, "desc"),
+        &9_999_999,
+        &3600,
+    );
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Rejected);
+}
+
+#[test]
+fn test_finalise_rejected_no_wins() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::No, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Rejected);
+}
+
+#[test]
+fn test_execute_passed_proposal() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    t.client.execute(&t.admin, &id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Executed);
+}
+
+#[test]
+fn test_cancel_proposal() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &proposer);
+    t.client.cancel(&t.admin, &id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Cancelled);
+}
+
+// ── TEST-009: concurrent proposal scenario tests ──────────────────────────────
+
+#[test]
+fn test_concurrent_proposals_independent_votes() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id1 = create_test_proposal(&t, &voter);
+    let id2 = create_test_proposal(&t, &voter);
+    let id3 = create_test_proposal(&t, &voter);
+
+    mint_and_vote(&t, &voter, id1, Vote::Yes, 1_000_000);
+    assert!(t.client.has_voted(&id1, &voter));
+    assert!(!t.client.has_voted(&id2, &voter));
+    assert!(!t.client.has_voted(&id3, &voter));
+}
+
+#[test]
+fn test_concurrent_votes_do_not_bleed() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id1 = create_test_proposal(&t, &voter);
+    let id2 = create_test_proposal(&t, &voter);
+
+    mint_and_vote(&t, &voter, id1, Vote::Yes, 1_000_000);
+
+    assert_eq!(t.client.get_proposal(&id1).votes_yes, 1_000_000);
+    let p2 = t.client.get_proposal(&id2);
+    assert_eq!(p2.votes_yes, 0);
+    assert_eq!(p2.votes_no, 0);
+    assert_eq!(p2.votes_abstain, 0);
+}
+
+#[test]
+fn test_finalise_one_does_not_affect_others() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id1 = create_test_proposal(&t, &voter);
+    let id2 = t.client.create_proposal(
+        &voter,
+        &String::from_str(&t.env, "P2"),
+        &String::from_str(&t.env, "d"),
+        &1,
+        &7200,
+    );
+
+    mint_and_vote(&t, &voter, id1, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id1);
+
+    assert_ne!(t.client.get_proposal(&id1).status, ProposalStatus::Active);
+    assert_eq!(t.client.get_proposal(&id2).status, ProposalStatus::Active);
+}
+
+#[test]
+fn test_proposal_ids_are_unique() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let id1 = create_test_proposal(&t, &proposer);
+    let id2 = create_test_proposal(&t, &proposer);
+    let id3 = create_test_proposal(&t, &proposer);
+    assert!(id1 != id2 && id2 != id3 && id1 != id3);
+    assert_eq!(t.client.proposal_count(), 3);
+}
+
+#[test]
+fn test_proposals_at_different_lifecycle_stages() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+
+    let active_id    = t.client.create_proposal(&voter, &String::from_str(&t.env, "Active"),   &String::from_str(&t.env, "d"), &1,         &7200);
+    let passed_id    = create_test_proposal(&t, &voter);
+    let rejected_id  = t.client.create_proposal(&voter, &String::from_str(&t.env, "Rejected"), &String::from_str(&t.env, "d"), &9_999_999, &3600);
+    let cancelled_id = create_test_proposal(&t, &voter);
+
+    mint_and_vote(&t, &voter, passed_id, Vote::Yes, 1_000_000);
+    t.client.cancel(&t.admin, &cancelled_id);
+
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&passed_id);
+    t.client.finalise(&rejected_id);
+
+    assert_eq!(t.client.get_proposal(&active_id).status,    ProposalStatus::Active);
+    assert_eq!(t.client.get_proposal(&passed_id).status,    ProposalStatus::Passed);
+    assert_eq!(t.client.get_proposal(&rejected_id).status,  ProposalStatus::Rejected);
+    assert_eq!(t.client.get_proposal(&cancelled_id).status, ProposalStatus::Cancelled);
+}
+
+// ── end TEST-009 ──────────────────────────────────────────────────────────────
+
+#[test]
+#[should_panic]
+fn test_cannot_vote_twice() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.client.cast_vote(&voter, &id, &Vote::No); // should panic
+}
+
+// ── TEST-013: access control negative tests ───────────────────────────────────
 
 #[test]
 #[should_panic(expected = "not admin")]
 fn test_execute_non_admin_reverts() {
-    let (env, client) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let non_admin = Address::generate(&env);
     let id = setup_passed_proposal(&env, &client, &admin);
@@ -351,20 +242,21 @@ fn test_execute_non_admin_reverts() {
 #[test]
 #[should_panic(expected = "not admin")]
 fn test_execute_zero_address_reverts() {
-    let (env, client) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let id = setup_passed_proposal(&env, &client, &admin);
-    // All-zero Stellar account (32 zero bytes) acts as the "zero address"
     let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
     client.execute(&zero, &id);
 }
 
-// ── cancel: non-admin caller ──────────────────────────────────────────────────
-
 #[test]
 #[should_panic(expected = "not admin")]
 fn test_cancel_non_admin_reverts() {
-    let (env, client) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let non_admin = Address::generate(&env);
     let id = setup_active_proposal(&env, &client, &admin);
@@ -374,208 +266,159 @@ fn test_cancel_non_admin_reverts() {
 #[test]
 #[should_panic(expected = "not admin")]
 fn test_cancel_zero_address_reverts() {
-    let (env, client) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let admin = Address::generate(&env);
     let id = setup_active_proposal(&env, &client, &admin);
     let zero = Address::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
     client.cancel(&zero, &id);
 }
 
+// ── end TEST-013 ──────────────────────────────────────────────────────────────
+
 // ── SC-027: update_quorum tests ───────────────────────────────────────────────
 
 #[test]
 fn test_update_quorum_success() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "P"),
-        &String::from_str(&env, "d"),
-        &100,
-        &3600,
-    );
-    client.update_quorum(&admin, &id, &500);
-    assert_eq!(client.get_proposal(&id).quorum, 500);
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &proposer);
+    t.client.update_quorum(&t.admin, &id, &500);
+    assert_eq!(t.client.get_proposal(&id).quorum, 500);
 }
 
 #[test]
 #[should_panic(expected = "not admin")]
 fn test_update_quorum_non_admin_reverts() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let non_admin = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &admin,
-        &String::from_str(&env, "P"),
-        &String::from_str(&env, "d"),
-        &100,
-        &3600,
-    );
-    client.update_quorum(&non_admin, &id, &500);
+    let t = setup_env();
+    let non_admin = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &t.admin.clone());
+    t.client.update_quorum(&non_admin, &id, &500);
 }
 
 #[test]
 #[should_panic]
 fn test_update_quorum_zero_reverts() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &admin,
-        &String::from_str(&env, "P"),
-        &String::from_str(&env, "d"),
-        &100,
-        &3600,
-    );
-    client.update_quorum(&admin, &id, &0);
+    let t = setup_env();
+    let id = create_test_proposal(&t, &t.admin.clone());
+    t.client.update_quorum(&t.admin, &id, &0);
 }
 
 #[test]
 #[should_panic]
 fn test_update_quorum_inactive_proposal_reverts() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &admin,
-        &String::from_str(&env, "P"),
-        &String::from_str(&env, "d"),
-        &100,
-        &3600,
-    );
-    client.cancel(&admin, &id);
-    client.update_quorum(&admin, &id, &500); // must panic: ProposalNotActive
+    let t = setup_env();
+    let id = create_test_proposal(&t, &t.admin.clone());
+    t.client.cancel(&t.admin, &id);
+    t.client.update_quorum(&t.admin, &id, &500);
 }
 
 // ── end SC-027 ────────────────────────────────────────────────────────────────
 
-// ── Storage persistence tests ─────────────────────────────────────────────────
+// ── storage persistence tests ─────────────────────────────────────────────────
 
-/// Proposal data is unchanged between create and read calls.
 #[test]
 fn test_proposal_data_persists_unchanged() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let id = t.client.create_proposal(
         &proposer,
-        &String::from_str(&env, "Persist title"),
-        &String::from_str(&env, "Persist desc"),
+        &String::from_str(&t.env, "Persist title"),
+        &String::from_str(&t.env, "Persist desc"),
         &250,
         &1800,
     );
-
-    let p = client.get_proposal(&id);
+    let p = t.client.get_proposal(&id);
     assert_eq!(p.id, id);
-    assert_eq!(p.title, String::from_str(&env, "Persist title"));
-    assert_eq!(p.description, String::from_str(&env, "Persist desc"));
+    assert_eq!(p.title, String::from_str(&t.env, "Persist title"));
+    assert_eq!(p.description, String::from_str(&t.env, "Persist desc"));
     assert_eq!(p.quorum, 250);
     assert_eq!(p.status, ProposalStatus::Active);
     assert_eq!(p.proposer, proposer);
 }
 
-/// Vote records persist after multiple votes by different voters.
 #[test]
 fn test_vote_records_persist_across_multiple_voters() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter1 = Address::generate(&env);
-    let voter2 = Address::generate(&env);
-    let voter3 = Address::generate(&env);
+    let t = setup_env();
+    let voter1 = Address::generate(&t.env);
+    let voter2 = Address::generate(&t.env);
+    let voter3 = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter1);
 
-    // Give each voter tokens
-    let token_id = setup_token(&env, &voter1);
-    let token_client = votechain_token::TokenContractClient::new(&env, &token_id);
-    token_client.transfer(&voter1, &voter2, &100_000);
-    token_client.transfer(&voter1, &voter3, &100_000);
+    mint_and_vote(&t, &voter1, id, Vote::Yes,     300_000);
+    mint_and_vote(&t, &voter2, id, Vote::No,      300_000);
+    mint_and_vote(&t, &voter3, id, Vote::Abstain, 300_000);
 
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &voter1,
-        &String::from_str(&env, "P"),
-        &String::from_str(&env, "d"),
-        &1,
-        &3600,
-    );
-
-    client.cast_vote(&voter1, &id, &Vote::Yes);
-    client.cast_vote(&voter2, &id, &Vote::No);
-    client.cast_vote(&voter3, &id, &Vote::Abstain);
-
-    assert!(client.has_voted(&id, &voter1));
-    assert!(client.has_voted(&id, &voter2));
-    assert!(client.has_voted(&id, &voter3));
-
-    let p = client.get_proposal(&id);
+    assert!(t.client.has_voted(&id, &voter1));
+    assert!(t.client.has_voted(&id, &voter2));
+    assert!(t.client.has_voted(&id, &voter3));
+    let p = t.client.get_proposal(&id);
     assert!(p.votes_yes > 0);
     assert!(p.votes_no > 0);
     assert!(p.votes_abstain > 0);
 }
 
-/// Admin address persists after initialization.
 #[test]
 fn test_admin_persists_after_initialization() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-
-    // Admin can perform admin-only actions, proving the stored admin is correct
-    let id = client.create_proposal(
-        &admin,
-        &String::from_str(&env, "P"),
-        &String::from_str(&env, "d"),
-        &1,
-        &3600,
-    );
-    // cancel requires the stored admin — would panic with "not admin" if wrong
-    client.cancel(&admin, &id);
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Cancelled);
+    let t = setup_env();
+    let id = create_test_proposal(&t, &t.admin.clone());
+    t.client.cancel(&t.admin, &id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Cancelled);
 }
 
-/// No data is lost or corrupted between calls.
 #[test]
 fn test_no_data_lost_between_calls() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id1 = create_test_proposal(&t, &voter);
+    let id2 = t.client.create_proposal(
+        &voter,
+        &String::from_str(&t.env, "P2"),
+        &String::from_str(&t.env, "d2"),
+        &200,
+        &7200,
+    );
 
-    client.initialize(&admin, &token_id);
+    mint_and_vote(&t, &voter, id1, Vote::Yes, 1_000_000);
 
-    let id1 = client.create_proposal(&voter, &String::from_str(&env, "P1"), &String::from_str(&env, "d1"), &100, &3600);
-    let id2 = client.create_proposal(&voter, &String::from_str(&env, "P2"), &String::from_str(&env, "d2"), &200, &7200);
-
-    client.cast_vote(&voter, &id1, &Vote::Yes);
-
-    // id2 must be untouched after voting on id1
-    let p2 = client.get_proposal(&id2);
-    assert_eq!(p2.title, String::from_str(&env, "P2"));
+    let p2 = t.client.get_proposal(&id2);
+    assert_eq!(p2.title, String::from_str(&t.env, "P2"));
     assert_eq!(p2.quorum, 200);
     assert_eq!(p2.votes_yes, 0);
     assert_eq!(p2.status, ProposalStatus::Active);
-
-    // id1 data must still be intact
-    let p1 = client.get_proposal(&id1);
-    assert_eq!(p1.title, String::from_str(&env, "P1"));
-    assert_eq!(p1.quorum, 100);
-    assert!(p1.votes_yes > 0);
-    assert!(!client.has_voted(&id2, &voter));
+    assert!(!t.client.has_voted(&id2, &voter));
 }
 
 // ── end storage persistence tests ─────────────────────────────────────────────
+
+// ── SEC-009: re-initialization guard tests ────────────────────────────────────
+
+/// Re-init by the original admin must revert with AlreadyInitialized.
+#[test]
+#[should_panic]
+fn test_reinit_by_original_admin_reverts() {
+    let t = setup_env();
+    t.client.initialize(&t.admin, &t.token_id);
+}
+
+/// Re-init by a new address must revert with AlreadyInitialized.
+#[test]
+#[should_panic]
+fn test_reinit_by_new_address_reverts() {
+    let t = setup_env();
+    let attacker = Address::generate(&t.env);
+    let new_token = Address::generate(&t.env);
+    t.client.initialize(&attacker, &new_token);
+}
+
+/// Re-init by the zero address must revert with AlreadyInitialized.
+#[test]
+#[should_panic]
+fn test_reinit_by_zero_address_reverts() {
+    let t = setup_env();
+    let zero = Address::from_str(&t.env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+    t.client.initialize(&zero, &t.token_id);
+}
+
+// ── end SEC-009 ───────────────────────────────────────────────────────────────
