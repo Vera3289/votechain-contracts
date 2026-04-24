@@ -132,6 +132,20 @@ impl GovernanceContract {
         Ok(())
     }
 
+    pub fn update_quorum(env: Env, admin: Address, proposal_id: u64, new_quorum: i128) -> Result<(), ContractError> {
+        admin.require_auth();
+        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
+        if new_quorum <= 0 { return Err(ContractError::InvalidQuorum); }
+        let mut proposal = load_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalStatus::Active {
+            return Err(ContractError::ProposalNotActive);
+        }
+        proposal.quorum = new_quorum;
+        save_proposal(&env, &proposal);
+        events::quorum_updated(&env, proposal_id, new_quorum);
+        Ok(())
+    }
+
     pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, ContractError> {
         load_proposal(&env, proposal_id)
     }

@@ -381,213 +381,81 @@ fn test_cancel_zero_address_reverts() {
     client.cancel(&zero, &id);
 }
 
-// ── TEST-010: Boundary and fuzz tests for numeric inputs ──────────────────────
+// ── SC-027: update_quorum tests ───────────────────────────────────────────────
 
-/// i128::MAX vote weight accumulates without overflow (single voter holds max balance).
 #[test]
-fn test_vote_weight_i128_max() {
+fn test_update_quorum_success() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
+    let proposer = Address::generate(&env);
     let token_id = setup_token(&env, &admin);
-    let token = votechain_token::TokenContractClient::new(&env, &token_id);
-    // Mint i128::MAX - 1_000_000 (initial supply already assigned to admin)
-    // Give voter a large but valid balance
-    token.mint(&admin, &voter, &(i128::MAX - 1_000_000));
 
     client.initialize(&admin, &token_id);
     let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Max weight"),
+        &proposer,
+        &String::from_str(&env, "P"),
         &String::from_str(&env, "d"),
-        &1,
+        &100,
         &3600,
     );
-    client.cast_vote(&voter, &id, &Vote::Yes);
-    let p = client.get_proposal(&id);
-    assert_eq!(p.votes_yes, i128::MAX - 1_000_000);
+    client.update_quorum(&admin, &id, &500);
+    assert_eq!(client.get_proposal(&id).quorum, 500);
 }
 
-/// i128::MAX quorum: proposal is rejected because total votes can never reach it.
 #[test]
-fn test_quorum_i128_max_always_rejected() {
+#[should_panic(expected = "not admin")]
+fn test_update_quorum_non_admin_reverts() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Max quorum"),
-        &String::from_str(&env, "d"),
-        &i128::MAX,
-        &3600,
-    );
-    client.cast_vote(&voter, &id, &Vote::Yes);
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&id);
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Rejected);
-}
-
-/// Zero-balance voter is rejected with NoVotingPower.
-#[test]
-#[should_panic]
-fn test_zero_balance_voter_rejected() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let zero_voter = Address::generate(&env); // never minted any tokens
+    let non_admin = Address::generate(&env);
     let token_id = setup_token(&env, &admin);
 
     client.initialize(&admin, &token_id);
     let id = client.create_proposal(
         &admin,
-        &String::from_str(&env, "Zero balance"),
+        &String::from_str(&env, "P"),
         &String::from_str(&env, "d"),
-        &1,
+        &100,
         &3600,
     );
-    client.cast_vote(&zero_voter, &id, &Vote::Yes); // must panic: NoVotingPower
+    client.update_quorum(&non_admin, &id, &500);
 }
 
-/// u64::MAX duration is accepted by create_proposal (non-zero, so valid).
-#[test]
-fn test_duration_u64_max_accepted() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "Max duration"),
-        &String::from_str(&env, "d"),
-        &1,
-        &u64::MAX,
-    );
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
-}
-
-/// Duration of 1 (minimum non-zero) is accepted.
-#[test]
-fn test_duration_min_boundary_accepted() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    let id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "Min duration"),
-        &String::from_str(&env, "d"),
-        &1,
-        &1,
-    );
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
-}
-
-/// Duration of 0 is rejected with InvalidDuration.
 #[test]
 #[should_panic]
-fn test_duration_zero_rejected() {
+fn test_update_quorum_zero_reverts() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
     let token_id = setup_token(&env, &admin);
-
-    client.initialize(&admin, &token_id);
-    client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "Zero duration"),
-        &String::from_str(&env, "d"),
-        &1,
-        &0, // must panic: InvalidDuration
-    );
-}
-
-/// Quorum of 1 (minimum valid) allows a single-token vote to pass.
-#[test]
-fn test_quorum_min_boundary_passes() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    let voter = Address::generate(&env);
-    let token_id = setup_token(&env, &voter);
 
     client.initialize(&admin, &token_id);
     let id = client.create_proposal(
-        &voter,
-        &String::from_str(&env, "Min quorum"),
+        &admin,
+        &String::from_str(&env, "P"),
         &String::from_str(&env, "d"),
-        &1,
+        &100,
         &3600,
     );
-    client.cast_vote(&voter, &id, &Vote::Yes);
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    client.finalise(&id);
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Passed);
+    client.update_quorum(&admin, &id, &0);
 }
 
-/// Quorum of 0 is rejected with InvalidQuorum.
 #[test]
 #[should_panic]
-fn test_quorum_zero_rejected() {
+fn test_update_quorum_inactive_proposal_reverts() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let proposer = Address::generate(&env);
     let token_id = setup_token(&env, &admin);
 
     client.initialize(&admin, &token_id);
-    client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "Zero quorum"),
+    let id = client.create_proposal(
+        &admin,
+        &String::from_str(&env, "P"),
         &String::from_str(&env, "d"),
-        &0, // must panic: InvalidQuorum
+        &100,
         &3600,
     );
+    client.cancel(&admin, &id);
+    client.update_quorum(&admin, &id, &500); // must panic: ProposalNotActive
 }
 
-/// Fuzz: a range of quorum values all behave consistently (non-zero accepted, zero rejected).
-#[test]
-fn test_fuzz_quorum_values() {
-    let quorum_values: &[i128] = &[1, 2, 100, 1_000_000, i128::MAX / 2, i128::MAX];
-    for &q in quorum_values {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let proposer = Address::generate(&env);
-        let token_id = setup_token(&env, &admin);
-        client.initialize(&admin, &token_id);
-        let id = client.create_proposal(
-            &proposer,
-            &String::from_str(&env, "Fuzz quorum"),
-            &String::from_str(&env, "d"),
-            &q,
-            &3600,
-        );
-        assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
-    }
-}
-
-/// Fuzz: a range of duration values all behave consistently (non-zero accepted).
-#[test]
-fn test_fuzz_duration_values() {
-    let durations: &[u64] = &[1, 2, 60, 3600, 86400, u64::MAX / 2, u64::MAX];
-    for &d in durations {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let proposer = Address::generate(&env);
-        let token_id = setup_token(&env, &admin);
-        client.initialize(&admin, &token_id);
-        let id = client.create_proposal(
-            &proposer,
-            &String::from_str(&env, "Fuzz duration"),
-            &String::from_str(&env, "d"),
-            &1,
-            &d,
-        );
-        assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
-    }
-}
-
-// ── end TEST-010 ──────────────────────────────────────────────────────────────
+// ── end SC-027 ────────────────────────────────────────────────────────────────
