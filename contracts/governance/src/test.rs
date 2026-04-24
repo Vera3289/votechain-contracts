@@ -459,3 +459,123 @@ fn test_update_quorum_inactive_proposal_reverts() {
 }
 
 // ── end SC-027 ────────────────────────────────────────────────────────────────
+
+// ── Storage persistence tests ─────────────────────────────────────────────────
+
+/// Proposal data is unchanged between create and read calls.
+#[test]
+fn test_proposal_data_persists_unchanged() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Persist title"),
+        &String::from_str(&env, "Persist desc"),
+        &250,
+        &1800,
+    );
+
+    let p = client.get_proposal(&id);
+    assert_eq!(p.id, id);
+    assert_eq!(p.title, String::from_str(&env, "Persist title"));
+    assert_eq!(p.description, String::from_str(&env, "Persist desc"));
+    assert_eq!(p.quorum, 250);
+    assert_eq!(p.status, ProposalStatus::Active);
+    assert_eq!(p.proposer, proposer);
+}
+
+/// Vote records persist after multiple votes by different voters.
+#[test]
+fn test_vote_records_persist_across_multiple_voters() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let voter1 = Address::generate(&env);
+    let voter2 = Address::generate(&env);
+    let voter3 = Address::generate(&env);
+
+    // Give each voter tokens
+    let token_id = setup_token(&env, &voter1);
+    let token_client = votechain_token::TokenContractClient::new(&env, &token_id);
+    token_client.transfer(&voter1, &voter2, &100_000);
+    token_client.transfer(&voter1, &voter3, &100_000);
+
+    client.initialize(&admin, &token_id);
+    let id = client.create_proposal(
+        &voter1,
+        &String::from_str(&env, "P"),
+        &String::from_str(&env, "d"),
+        &1,
+        &3600,
+    );
+
+    client.cast_vote(&voter1, &id, &Vote::Yes);
+    client.cast_vote(&voter2, &id, &Vote::No);
+    client.cast_vote(&voter3, &id, &Vote::Abstain);
+
+    assert!(client.has_voted(&id, &voter1));
+    assert!(client.has_voted(&id, &voter2));
+    assert!(client.has_voted(&id, &voter3));
+
+    let p = client.get_proposal(&id);
+    assert!(p.votes_yes > 0);
+    assert!(p.votes_no > 0);
+    assert!(p.votes_abstain > 0);
+}
+
+/// Admin address persists after initialization.
+#[test]
+fn test_admin_persists_after_initialization() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+
+    client.initialize(&admin, &token_id);
+
+    // Admin can perform admin-only actions, proving the stored admin is correct
+    let id = client.create_proposal(
+        &admin,
+        &String::from_str(&env, "P"),
+        &String::from_str(&env, "d"),
+        &1,
+        &3600,
+    );
+    // cancel requires the stored admin — would panic with "not admin" if wrong
+    client.cancel(&admin, &id);
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Cancelled);
+}
+
+/// No data is lost or corrupted between calls.
+#[test]
+fn test_no_data_lost_between_calls() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let voter = Address::generate(&env);
+    let token_id = setup_token(&env, &voter);
+
+    client.initialize(&admin, &token_id);
+
+    let id1 = client.create_proposal(&voter, &String::from_str(&env, "P1"), &String::from_str(&env, "d1"), &100, &3600);
+    let id2 = client.create_proposal(&voter, &String::from_str(&env, "P2"), &String::from_str(&env, "d2"), &200, &7200);
+
+    client.cast_vote(&voter, &id1, &Vote::Yes);
+
+    // id2 must be untouched after voting on id1
+    let p2 = client.get_proposal(&id2);
+    assert_eq!(p2.title, String::from_str(&env, "P2"));
+    assert_eq!(p2.quorum, 200);
+    assert_eq!(p2.votes_yes, 0);
+    assert_eq!(p2.status, ProposalStatus::Active);
+
+    // id1 data must still be intact
+    let p1 = client.get_proposal(&id1);
+    assert_eq!(p1.title, String::from_str(&env, "P1"));
+    assert_eq!(p1.quorum, 100);
+    assert!(p1.votes_yes > 0);
+    assert!(!client.has_voted(&id2, &voter));
+}
+
+// ── end storage persistence tests ─────────────────────────────────────────────
