@@ -31,6 +31,8 @@ pub enum ContractError {
     ProposalNotPassed = 12,
     /// 13 – Contract has already been initialized
     AlreadyInitialized = 13,
+    /// 14 – Proposal quorum is below the contract minimum
+    BelowMinQuorum = 14,
 }
 
 #[contracttype]
@@ -74,4 +76,5 @@ pub enum DataKey {
     HasVoted(u64, Address),  // (proposal_id, voter)
     Admin,
     VotingToken,
+    MinQuorum,
 }

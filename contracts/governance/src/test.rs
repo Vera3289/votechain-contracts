@@ -22,7 +22,7 @@ fn new_client(env: &Env) -> GovernanceContractClient<'static> {
 fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let voter = Address::generate(env);
     let token_id = setup_token(env, &voter);
-    client.initialize(admin, &token_id);
+    client.initialize(admin, &token_id, &0_i128);
     let id = client.create_proposal(
         &voter,
         &String::from_str(env, "Prop"),
@@ -40,7 +40,7 @@ fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &A
 fn setup_active_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let proposer = Address::generate(env);
     let token_id = setup_token(env, admin);
-    client.initialize(admin, &token_id);
+    client.initialize(admin, &token_id, &0_i128);
     client.create_proposal(
         &proposer,
         &String::from_str(env, "Prop"),
@@ -422,3 +422,75 @@ fn test_reinit_by_zero_address_reverts() {
 }
 
 // ── end SEC-009 ───────────────────────────────────────────────────────────────
+
+// ── quorum validation tests ───────────────────────────────────────────────────
+
+#[test]
+#[should_panic]
+fn test_create_proposal_quorum_zero_reverts() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, "Bad"),
+        &String::from_str(&t.env, "desc"),
+        &0,
+        &3600,
+    );
+}
+
+#[test]
+fn test_create_proposal_quorum_one_accepted() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let id = t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, "Min quorum"),
+        &String::from_str(&t.env, "desc"),
+        &1,
+        &3600,
+    );
+    assert_eq!(t.client.get_proposal(&id).quorum, 1);
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_below_min_quorum_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    // initialize with min_quorum = 100
+    client.initialize(&admin, &token_id, &100_i128);
+    let proposer = Address::generate(&env);
+    // quorum = 50 is below min_quorum = 100 → should panic
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Low"),
+        &String::from_str(&env, "desc"),
+        &50,
+        &3600,
+    );
+}
+
+#[test]
+fn test_create_proposal_at_min_quorum_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id, &100_i128);
+    let proposer = Address::generate(&env);
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Exact"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+    assert_eq!(client.get_proposal(&id).quorum, 100);
+}
+
+// ── end quorum validation tests ───────────────────────────────────────────────

@@ -54,3 +54,11 @@ pub fn has_voted(env: &Env, proposal_id: u64, voter: &Address) -> bool {
         .get(&DataKey::HasVoted(proposal_id, voter.clone()))
         .unwrap_or(false)
 }
+
+pub fn set_min_quorum(env: &Env, min_quorum: i128) {
+    env.storage().instance().set(&DataKey::MinQuorum, &min_quorum);
+}
+
+pub fn get_min_quorum(env: &Env) -> i128 {
+    env.storage().instance().get(&DataKey::MinQuorum).unwrap_or(0)
+}
