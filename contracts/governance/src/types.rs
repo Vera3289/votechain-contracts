@@ -31,6 +31,8 @@ pub enum ContractError {
     ProposalNotPassed = 12,
     /// 13 – Contract has already been initialized
     AlreadyInitialized = 13,
+    /// 14 – Token contract call failed
+    TokenContractError = 14,
 }
 
 #[contracttype]
