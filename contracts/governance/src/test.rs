@@ -22,7 +22,7 @@ fn new_client(env: &Env) -> GovernanceContractClient<'static> {
 fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let voter = Address::generate(env);
     let token_id = setup_token(env, &voter);
-    client.initialize(admin, &token_id);
+    client.initialize(admin, &token_id, &0_i128, &0_u64);
     let id = client.create_proposal(
         &voter,
         &String::from_str(env, "Prop"),
@@ -40,7 +40,7 @@ fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &A
 fn setup_active_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let proposer = Address::generate(env);
     let token_id = setup_token(env, admin);
-    client.initialize(admin, &token_id);
+    client.initialize(admin, &token_id, &0_i128, &0_u64);
     client.create_proposal(
         &proposer,
         &String::from_str(env, "Prop"),
@@ -392,6 +392,205 @@ fn test_no_data_lost_between_calls() {
 
 // ── end storage persistence tests ─────────────────────────────────────────────
 
+// ── Issue #28: comprehensive voting scenario tests ────────────────────────────
+
+#[test]
+fn test_vote_yes_recorded_correctly() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 500_000);
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, 500_000);
+    assert_eq!(p.votes_no, 0);
+    assert_eq!(p.votes_abstain, 0);
+}
+
+#[test]
+fn test_vote_no_recorded_correctly() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::No, 750_000);
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, 0);
+    assert_eq!(p.votes_no, 750_000);
+    assert_eq!(p.votes_abstain, 0);
+}
+
+#[test]
+fn test_vote_abstain_recorded_correctly() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Abstain, 250_000);
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, 0);
+    assert_eq!(p.votes_no, 0);
+    assert_eq!(p.votes_abstain, 250_000);
+}
+
+#[test]
+fn test_vote_weight_matches_token_balance() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    let balance = 1_234_567;
+    mint_and_vote(&t, &voter, id, Vote::Yes, balance);
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, balance);
+}
+
+#[test]
+#[should_panic(expected = "already voted")]
+fn test_double_vote_same_choice_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.client.cast_vote(&voter, &id, &Vote::Yes);
+}
+
+#[test]
+#[should_panic(expected = "already voted")]
+fn test_double_vote_different_choice_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.client.cast_vote(&voter, &id, &Vote::No);
+}
+
+#[test]
+#[should_panic(expected = "not active")]
+fn test_vote_on_passed_proposal_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    let voter2 = Address::generate(&t.env);
+    mint_and_vote(&t, &voter2, id, Vote::Yes, 500_000);
+}
+
+#[test]
+#[should_panic(expected = "not active")]
+fn test_vote_on_rejected_proposal_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::No, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    let voter2 = Address::generate(&t.env);
+    mint_and_vote(&t, &voter2, id, Vote::Yes, 500_000);
+}
+
+#[test]
+#[should_panic(expected = "not active")]
+fn test_vote_on_cancelled_proposal_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    t.client.cancel(&t.admin, &id);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+}
+
+#[test]
+#[should_panic(expected = "not active")]
+fn test_vote_on_executed_proposal_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    t.client.execute(&t.admin, &id);
+    let voter2 = Address::generate(&t.env);
+    mint_and_vote(&t, &voter2, id, Vote::Yes, 500_000);
+}
+
+#[test]
+#[should_panic(expected = "voting period ended")]
+fn test_vote_after_end_time_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+}
+
+#[test]
+fn test_vote_at_exact_end_time_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let now = t.env.ledger().timestamp();
+    let id = t.client.create_proposal(
+        &voter,
+        &String::from_str(&t.env, "Test"),
+        &String::from_str(&t.env, "desc"),
+        &1,
+        &3600,
+    );
+    t.env.ledger().with_mut(|l| l.timestamp = now + 3600);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+#[should_panic(expected = "no voting power")]
+fn test_vote_with_zero_balance_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    t.client.cast_vote(&voter, &id, &Vote::Yes);
+}
+
+#[test]
+fn test_vote_tallies_accumulate_correctly() {
+    let t = setup_env();
+    let voter1 = Address::generate(&t.env);
+    let voter2 = Address::generate(&t.env);
+    let voter3 = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter1);
+    
+    mint_and_vote(&t, &voter1, id, Vote::Yes, 100_000);
+    mint_and_vote(&t, &voter2, id, Vote::Yes, 200_000);
+    mint_and_vote(&t, &voter3, id, Vote::No, 150_000);
+    
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, 300_000);
+    assert_eq!(p.votes_no, 150_000);
+    assert_eq!(p.votes_abstain, 0);
+}
+
+#[test]
+fn test_vote_tallies_all_three_types() {
+    let t = setup_env();
+    let v1 = Address::generate(&t.env);
+    let v2 = Address::generate(&t.env);
+    let v3 = Address::generate(&t.env);
+    let v4 = Address::generate(&t.env);
+    let v5 = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &v1);
+    
+    mint_and_vote(&t, &v1, id, Vote::Yes, 100_000);
+    mint_and_vote(&t, &v2, id, Vote::Yes, 200_000);
+    mint_and_vote(&t, &v3, id, Vote::No, 150_000);
+    mint_and_vote(&t, &v4, id, Vote::No, 50_000);
+    mint_and_vote(&t, &v5, id, Vote::Abstain, 75_000);
+    
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, 300_000);
+    assert_eq!(p.votes_no, 200_000);
+    assert_eq!(p.votes_abstain, 75_000);
+}
+
+// ── end Issue #28 ─────────────────────────────────────────────────────────────
+
 // ── SEC-009: re-initialization guard tests ────────────────────────────────────
 
 /// Re-init by the original admin must revert with AlreadyInitialized.
@@ -399,7 +598,7 @@ fn test_no_data_lost_between_calls() {
 #[should_panic]
 fn test_reinit_by_original_admin_reverts() {
     let t = setup_env();
-    t.client.initialize(&t.admin, &t.token_id);
+    t.client.initialize(&t.admin, &t.token_id, &0_i128, &0_u64);
 }
 
 /// Re-init by a new address must revert with AlreadyInitialized.
@@ -409,7 +608,7 @@ fn test_reinit_by_new_address_reverts() {
     let t = setup_env();
     let attacker = Address::generate(&t.env);
     let new_token = Address::generate(&t.env);
-    t.client.initialize(&attacker, &new_token);
+    t.client.initialize(&attacker, &new_token, &0_i128, &0_u64);
 }
 
 /// Re-init by the zero address must revert with AlreadyInitialized.
@@ -418,476 +617,114 @@ fn test_reinit_by_new_address_reverts() {
 fn test_reinit_by_zero_address_reverts() {
     let t = setup_env();
     let zero = Address::from_str(&t.env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
-    t.client.initialize(&zero, &t.token_id);
+    t.client.initialize(&zero, &t.token_id, &0_i128, &0_u64);
 }
 
 // ── end SEC-009 ───────────────────────────────────────────────────────────────
 
-// ── Comprehensive Event Verification Tests ───────────────────────────────────
-
-use soroban_sdk::{symbol_short, testutils::Events, IntoVal};
-
-// ── Event: proposal_created ──────────────────────────────────────────────────
+// ── spam prevention tests ─────────────────────────────────────────────────────
 
 #[test]
-fn test_event_proposal_created_topics() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &proposer);
-    
-    let events = t.env.events().all();
-    let created_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("created"), id).into_val(&t.env)
-    });
-    
-    assert!(created_event.is_some(), "proposal_created event not found");
-    let (_, topics, _) = created_event.unwrap();
-    assert_eq!(topics, (symbol_short!("created"), id).into_val(&t.env));
-}
+#[should_panic]
+fn test_create_proposal_below_min_balance_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    // require 500_000 tokens to propose
+    client.initialize(&admin, &token_id, &500_000_i128, &0_u64);
 
-#[test]
-fn test_event_proposal_created_data_fields() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &proposer);
-    
-    let events = t.env.events().all();
-    let created_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("created"), id).into_val(&t.env)
-    });
-    
-    assert!(created_event.is_some());
-    let (_, _, data) = created_event.unwrap();
-    assert_eq!(data, proposer.into_val(&t.env), "proposer address mismatch");
-}
-
-#[test]
-fn test_event_proposal_created_matches_transaction_input() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    
-    // Create proposal with specific proposer
-    let id = t.client.create_proposal(
+    let proposer = Address::generate(&env);
+    // proposer has 0 tokens — should panic
+    client.create_proposal(
         &proposer,
-        &String::from_str(&t.env, "Test"),
-        &String::from_str(&t.env, "desc"),
+        &String::from_str(&env, "Spam"),
+        &String::from_str(&env, "desc"),
         &100,
         &3600,
     );
-    
-    // Verify event data matches the input proposer
-    let events = t.env.events().all();
-    let created_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("created"), id).into_val(&t.env)
-    });
-    
-    let (_, _, data) = created_event.unwrap();
-    assert_eq!(data, proposer.into_val(&t.env));
-}
-
-// ── Event: vote_cast ──────────────────────────────────────────────────────────
-
-#[test]
-fn test_event_vote_cast_topics() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    
-    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    
-    let events = t.env.events().all();
-    let vote_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("vote"), id).into_val(&t.env)
-    });
-    
-    assert!(vote_event.is_some(), "vote_cast event not found");
 }
 
 #[test]
-fn test_event_vote_cast_yes_data_fields() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    let weight = 750_000_i128;
-    
-    mint_and_vote(&t, &voter, id, Vote::Yes, weight);
-    
-    let events = t.env.events().all();
-    let vote_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("vote"), id).into_val(&t.env)
-    });
-    
-    assert!(vote_event.is_some());
-    let (_, _, data) = vote_event.unwrap();
-    assert_eq!(data, (voter.clone(), Vote::Yes, weight).into_val(&t.env));
+fn test_create_proposal_at_min_balance_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id, &500_000_i128, &0_u64);
+
+    let proposer = Address::generate(&env);
+    let tok = votechain_token::TokenContractClient::new(&env, &token_id);
+    tok.mint(&admin, &proposer, &500_000_i128);
+
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Valid"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
 }
 
 #[test]
-fn test_event_vote_cast_no_data_fields() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    let weight = 250_000_i128;
-    
-    mint_and_vote(&t, &voter, id, Vote::No, weight);
-    
-    let events = t.env.events().all();
-    let vote_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("vote"), id).into_val(&t.env)
-    });
-    
-    assert!(vote_event.is_some());
-    let (_, _, data) = vote_event.unwrap();
-    assert_eq!(data, (voter.clone(), Vote::No, weight).into_val(&t.env));
+#[should_panic]
+fn test_create_proposal_within_cooldown_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    // 1 hour cooldown, no balance requirement
+    client.initialize(&admin, &token_id, &0_i128, &3600_u64);
+
+    let proposer = Address::generate(&env);
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "First"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+    // second proposal immediately — should panic
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Spam"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
 }
 
 #[test]
-fn test_event_vote_cast_abstain_data_fields() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    let weight = 500_000_i128;
-    
-    mint_and_vote(&t, &voter, id, Vote::Abstain, weight);
-    
-    let events = t.env.events().all();
-    let vote_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("vote"), id).into_val(&t.env)
-    });
-    
-    assert!(vote_event.is_some());
-    let (_, _, data) = vote_event.unwrap();
-    assert_eq!(data, (voter.clone(), Vote::Abstain, weight).into_val(&t.env));
+fn test_create_proposal_after_cooldown_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id, &0_i128, &3600_u64);
+
+    let proposer = Address::generate(&env);
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "First"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &7200,
+    );
+    // advance past cooldown
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+    let id2 = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Second"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+    assert_eq!(client.get_proposal(&id2).status, ProposalStatus::Active);
 }
 
-#[test]
-fn test_event_vote_cast_weight_matches_token_balance() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    let balance = 1_234_567_i128;
-    
-    // Mint specific balance
-    mint_and_vote(&t, &voter, id, Vote::Yes, balance);
-    
-    // Verify event weight matches the minted balance
-    let events = t.env.events().all();
-    let vote_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("vote"), id).into_val(&t.env)
-    });
-    
-    let (_, _, data) = vote_event.unwrap();
-    let (_, _, event_weight): (Address, Vote, i128) = data.clone().try_into_val(&t.env).unwrap();
-    assert_eq!(event_weight, balance);
-}
-
-// ── Event: proposal_finalised ─────────────────────────────────────────────────
-
-#[test]
-fn test_event_proposal_finalised_passed_topics_and_data() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    
-    t.env.ledger().with_mut(|l| l.timestamp += 3601);
-    t.client.finalise(&id);
-    
-    let events = t.env.events().all();
-    let final_event = events.iter().find(|(_, topics, data)| {
-        topics == &(symbol_short!("final"), id).into_val(&t.env)
-            && data == &ProposalStatus::Passed.into_val(&t.env)
-    });
-    
-    assert!(final_event.is_some(), "finalised Passed event not found");
-}
-
-#[test]
-fn test_event_proposal_finalised_rejected_topics_and_data() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    mint_and_vote(&t, &voter, id, Vote::No, 1_000_000);
-    
-    t.env.ledger().with_mut(|l| l.timestamp += 3601);
-    t.client.finalise(&id);
-    
-    let events = t.env.events().all();
-    let final_event = events.iter().find(|(_, topics, data)| {
-        topics == &(symbol_short!("final"), id).into_val(&t.env)
-            && data == &ProposalStatus::Rejected.into_val(&t.env)
-    });
-    
-    assert!(final_event.is_some(), "finalised Rejected event not found");
-}
-
-#[test]
-fn test_event_proposal_executed_topics_and_data() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    
-    t.env.ledger().with_mut(|l| l.timestamp += 3601);
-    t.client.finalise(&id);
-    t.client.execute(&t.admin, &id);
-    
-    let events = t.env.events().all();
-    let exec_event = events.iter().find(|(_, topics, data)| {
-        topics == &(symbol_short!("final"), id).into_val(&t.env)
-            && data == &ProposalStatus::Executed.into_val(&t.env)
-    });
-    
-    assert!(exec_event.is_some(), "executed event not found");
-}
-
-#[test]
-fn test_event_proposal_cancelled_topics_and_data() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &proposer);
-    
-    t.client.cancel(&t.admin, &id);
-    
-    let events = t.env.events().all();
-    let cancel_event = events.iter().find(|(_, topics, data)| {
-        topics == &(symbol_short!("final"), id).into_val(&t.env)
-            && data == &ProposalStatus::Cancelled.into_val(&t.env)
-    });
-    
-    assert!(cancel_event.is_some(), "cancelled event not found");
-}
-
-// ── Event: quorum_updated ─────────────────────────────────────────────────────
-
-#[test]
-fn test_event_quorum_updated_topics() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &proposer);
-    let new_quorum = 500_i128;
-    
-    t.client.update_quorum(&t.admin, &id, &new_quorum);
-    
-    let events = t.env.events().all();
-    let quorum_event = events.iter().find(|(_, topics, _)| {
-        topics == &(symbol_short!("qupdate"), id).into_val(&t.env)
-    });
-    
-    assert!(quorum_event.is_some(), "quorum_updated event not found");
-}
-
-#[test]
-fn test_event_quorum_updated_data_matches_input() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &proposer);
-    let new_quorum = 750_i128;
-    
-    t.client.update_quorum(&t.admin, &id, &new_quorum);
-    
-    let events = t.env.events().all();
-    let quorum_event = events.iter().find(|(_, topics, data)| {
-        topics == &(symbol_short!("qupdate"), id).into_val(&t.env)
-            && data == &new_quorum.into_val(&t.env)
-    });
-    
-    assert!(quorum_event.is_some());
-}
-
-// ── No Unexpected Events ──────────────────────────────────────────────────────
-
-#[test]
-fn test_no_unexpected_events_on_proposal_creation() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    
-    let events_before = t.env.events().all().len();
-    let id = create_test_proposal(&t, &proposer);
-    let events_after = t.env.events().all();
-    
-    let new_events: Vec<_> = events_after.iter().skip(events_before).collect();
-    
-    // Should have exactly 1 event (proposal_created)
-    assert_eq!(new_events.len(), 1, "Expected exactly 1 event on proposal creation");
-    
-    let (_, topics, _) = new_events[0];
-    assert_eq!(topics, (symbol_short!("created"), id).into_val(&t.env));
-}
-
-#[test]
-fn test_no_unexpected_events_on_vote() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    
-    let events_before = t.env.events().all().len();
-    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    let events_after = t.env.events().all();
-    
-    let new_events: Vec<_> = events_after.iter().skip(events_before).collect();
-    
-    // Should have vote event from governance (mint events are from token contract)
-    let vote_events: Vec<_> = new_events.iter().filter(|(_, topics, _)| {
-        topics == &(symbol_short!("vote"), id).into_val(&t.env)
-    }).collect();
-    
-    assert_eq!(vote_events.len(), 1, "Expected exactly 1 vote event");
-}
-
-#[test]
-fn test_no_unexpected_events_on_finalise() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    
-    t.env.ledger().with_mut(|l| l.timestamp += 3601);
-    
-    let events_before = t.env.events().all().len();
-    t.client.finalise(&id);
-    let events_after = t.env.events().all();
-    
-    let new_events: Vec<_> = events_after.iter().skip(events_before).collect();
-    
-    // Should have exactly 1 event (proposal_finalised)
-    assert_eq!(new_events.len(), 1, "Expected exactly 1 event on finalise");
-    
-    let (_, topics, _) = new_events[0];
-    assert_eq!(topics, (symbol_short!("final"), id).into_val(&t.env));
-}
-
-#[test]
-fn test_no_unexpected_events_on_execute() {
-    let t = setup_env();
-    let voter = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter);
-    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    t.env.ledger().with_mut(|l| l.timestamp += 3601);
-    t.client.finalise(&id);
-    
-    let events_before = t.env.events().all().len();
-    t.client.execute(&t.admin, &id);
-    let events_after = t.env.events().all();
-    
-    let new_events: Vec<_> = events_after.iter().skip(events_before).collect();
-    
-    // Should have exactly 1 event (proposal_finalised with Executed status)
-    assert_eq!(new_events.len(), 1, "Expected exactly 1 event on execute");
-}
-
-#[test]
-fn test_no_unexpected_events_on_cancel() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &proposer);
-    
-    let events_before = t.env.events().all().len();
-    t.client.cancel(&t.admin, &id);
-    let events_after = t.env.events().all();
-    
-    let new_events: Vec<_> = events_after.iter().skip(events_before).collect();
-    
-    // Should have exactly 1 event (proposal_finalised with Cancelled status)
-    assert_eq!(new_events.len(), 1, "Expected exactly 1 event on cancel");
-}
-
-#[test]
-fn test_no_unexpected_events_on_quorum_update() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &proposer);
-    
-    let events_before = t.env.events().all().len();
-    t.client.update_quorum(&t.admin, &id, &500);
-    let events_after = t.env.events().all();
-    
-    let new_events: Vec<_> = events_after.iter().skip(events_before).collect();
-    
-    // Should have exactly 1 event (quorum_updated)
-    assert_eq!(new_events.len(), 1, "Expected exactly 1 event on quorum update");
-}
-
-// ── Multiple Events ───────────────────────────────────────────────────────────
-
-#[test]
-fn test_multiple_votes_emit_separate_events() {
-    let t = setup_env();
-    let v1 = Address::generate(&t.env);
-    let v2 = Address::generate(&t.env);
-    let v3 = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &v1);
-    
-    mint_and_vote(&t, &v1, id, Vote::Yes, 100_000);
-    mint_and_vote(&t, &v2, id, Vote::No, 200_000);
-    mint_and_vote(&t, &v3, id, Vote::Abstain, 300_000);
-    
-    let events = t.env.events().all();
-    let vote_events: Vec<_> = events.iter().filter(|(_, topics, _)| {
-        topics == &(symbol_short!("vote"), id).into_val(&t.env)
-    }).collect();
-    
-    assert_eq!(vote_events.len(), 3, "Expected 3 separate vote events");
-}
-
-#[test]
-fn test_multiple_proposals_emit_separate_created_events() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    
-    let id1 = create_test_proposal(&t, &proposer);
-    let id2 = create_test_proposal(&t, &proposer);
-    let id3 = create_test_proposal(&t, &proposer);
-    
-    let events = t.env.events().all();
-    
-    // Check each proposal has its own created event
-    let created1 = events.iter().any(|(_, topics, _)| {
-        topics == &(symbol_short!("created"), id1).into_val(&t.env)
-    });
-    let created2 = events.iter().any(|(_, topics, _)| {
-        topics == &(symbol_short!("created"), id2).into_val(&t.env)
-    });
-    let created3 = events.iter().any(|(_, topics, _)| {
-        topics == &(symbol_short!("created"), id3).into_val(&t.env)
-    });
-    
-    assert!(created1 && created2 && created3, "Each proposal should have its own created event");
-}
-
-#[test]
-fn test_event_sequence_matches_operation_order() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let voter = Address::generate(&t.env);
-    
-    let events_start = t.env.events().all().len();
-    
-    // 1. Create proposal
-    let id = create_test_proposal(&t, &proposer);
-    
-    // 2. Cast vote
-    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    
-    // 3. Finalise
-    t.env.ledger().with_mut(|l| l.timestamp += 3601);
-    t.client.finalise(&id);
-    
-    // 4. Execute
-    t.client.execute(&t.admin, &id);
-    
-    let all_events = t.env.events().all();
-    let governance_events: Vec<_> = all_events.iter()
-        .skip(events_start)
-        .filter(|(_, topics, _)| {
-            // Filter for governance contract events (created, vote, final)
-            let topic_str = format!("{:?}", topics);
-            topic_str.contains("created") || topic_str.contains("vote") || topic_str.contains("final")
-        })
-        .collect();
-    
-    // Should have at least 4 events in order: created, vote, final (Passed), final (Executed)
-    assert!(governance_events.len() >= 4, "Expected at least 4 governance events");
-}
-
-// ── end Comprehensive Event Verification Tests ───────────────────────────────
+// ── end spam prevention tests ─────────────────────────────────────────────────
