@@ -1,0 +1,45 @@
+name: Bug Report
+description: Report a bug in VoteChain contracts
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear summary of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Minimal steps to reproduce the issue.
+      placeholder: |
+        1. Call `create_proposal(...)` with ...
+        2. Call `cast_vote(...)` with ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Contract Version / Commit
+      placeholder: "e.g. main@abc1234"
+    validations:
+      required: false
