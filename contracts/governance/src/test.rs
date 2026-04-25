@@ -22,7 +22,7 @@ fn new_client(env: &Env) -> GovernanceContractClient<'static> {
 fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let voter = Address::generate(env);
     let token_id = setup_token(env, &voter);
-    client.initialize(admin, &token_id, &0_i128);
+    client.initialize(admin, &token_id, &0_i128, &0_u64);
     let id = client.create_proposal(
         &voter,
         &String::from_str(env, "Prop"),
@@ -40,7 +40,7 @@ fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &A
 fn setup_active_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let proposer = Address::generate(env);
     let token_id = setup_token(env, admin);
-    client.initialize(admin, &token_id, &0_i128);
+    client.initialize(admin, &token_id, &0_i128, &0_u64);
     client.create_proposal(
         &proposer,
         &String::from_str(env, "Prop"),
@@ -399,7 +399,7 @@ fn test_no_data_lost_between_calls() {
 #[should_panic]
 fn test_reinit_by_original_admin_reverts() {
     let t = setup_env();
-    t.client.initialize(&t.admin, &t.token_id);
+    t.client.initialize(&t.admin, &t.token_id, &0_i128, &0_u64);
 }
 
 /// Re-init by a new address must revert with AlreadyInitialized.
@@ -409,7 +409,7 @@ fn test_reinit_by_new_address_reverts() {
     let t = setup_env();
     let attacker = Address::generate(&t.env);
     let new_token = Address::generate(&t.env);
-    t.client.initialize(&attacker, &new_token);
+    t.client.initialize(&attacker, &new_token, &0_i128, &0_u64);
 }
 
 /// Re-init by the zero address must revert with AlreadyInitialized.
@@ -418,79 +418,114 @@ fn test_reinit_by_new_address_reverts() {
 fn test_reinit_by_zero_address_reverts() {
     let t = setup_env();
     let zero = Address::from_str(&t.env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
-    t.client.initialize(&zero, &t.token_id);
+    t.client.initialize(&zero, &t.token_id, &0_i128, &0_u64);
 }
 
 // ── end SEC-009 ───────────────────────────────────────────────────────────────
 
-// ── quorum validation tests ───────────────────────────────────────────────────
+// ── spam prevention tests ─────────────────────────────────────────────────────
 
 #[test]
 #[should_panic]
-fn test_create_proposal_quorum_zero_reverts() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, "Bad"),
-        &String::from_str(&t.env, "desc"),
-        &0,
-        &3600,
-    );
-}
-
-#[test]
-fn test_create_proposal_quorum_one_accepted() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let id = t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, "Min quorum"),
-        &String::from_str(&t.env, "desc"),
-        &1,
-        &3600,
-    );
-    assert_eq!(t.client.get_proposal(&id).quorum, 1);
-}
-
-#[test]
-#[should_panic]
-fn test_create_proposal_below_min_quorum_reverts() {
+fn test_create_proposal_below_min_balance_reverts() {
     let env = Env::default();
     env.mock_all_auths();
     let client = new_client(&env);
     let admin = Address::generate(&env);
     let token_id = setup_token(&env, &admin);
-    // initialize with min_quorum = 100
-    client.initialize(&admin, &token_id, &100_i128);
+    // require 500_000 tokens to propose
+    client.initialize(&admin, &token_id, &500_000_i128, &0_u64);
+
     let proposer = Address::generate(&env);
-    // quorum = 50 is below min_quorum = 100 → should panic
+    // proposer has 0 tokens — should panic
     client.create_proposal(
         &proposer,
-        &String::from_str(&env, "Low"),
-        &String::from_str(&env, "desc"),
-        &50,
-        &3600,
-    );
-}
-
-#[test]
-fn test_create_proposal_at_min_quorum_accepted() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = new_client(&env);
-    let admin = Address::generate(&env);
-    let token_id = setup_token(&env, &admin);
-    client.initialize(&admin, &token_id, &100_i128);
-    let proposer = Address::generate(&env);
-    let id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "Exact"),
+        &String::from_str(&env, "Spam"),
         &String::from_str(&env, "desc"),
         &100,
         &3600,
     );
-    assert_eq!(client.get_proposal(&id).quorum, 100);
 }
 
-// ── end quorum validation tests ───────────────────────────────────────────────
+#[test]
+fn test_create_proposal_at_min_balance_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id, &500_000_i128, &0_u64);
+
+    let proposer = Address::generate(&env);
+    let tok = votechain_token::TokenContractClient::new(&env, &token_id);
+    tok.mint(&admin, &proposer, &500_000_i128);
+
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Valid"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_within_cooldown_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    // 1 hour cooldown, no balance requirement
+    client.initialize(&admin, &token_id, &0_i128, &3600_u64);
+
+    let proposer = Address::generate(&env);
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "First"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+    // second proposal immediately — should panic
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Spam"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+}
+
+#[test]
+fn test_create_proposal_after_cooldown_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let admin = Address::generate(&env);
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id, &0_i128, &3600_u64);
+
+    let proposer = Address::generate(&env);
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "First"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &7200,
+    );
+    // advance past cooldown
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+    let id2 = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Second"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &3600,
+    );
+    assert_eq!(client.get_proposal(&id2).status, ProposalStatus::Active);
+}
+
+// ── end spam prevention tests ─────────────────────────────────────────────────

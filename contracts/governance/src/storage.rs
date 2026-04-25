@@ -74,12 +74,28 @@ pub fn has_voted(env: &Env, proposal_id: u64, voter: &Address) -> bool {
         .unwrap_or(false)
 }
 
-pub fn set_min_quorum(env: &Env, min_quorum: i128) {
-    env.storage().instance().set(&DataKey::MinQuorum, &min_quorum);
+pub fn set_min_proposal_balance(env: &Env, v: i128) {
+    env.storage().instance().set(&DataKey::MinProposalBalance, &v);
 }
 
-pub fn get_min_quorum(env: &Env) -> i128 {
-    env.storage().instance().get(&DataKey::MinQuorum).unwrap_or(0)
+pub fn get_min_proposal_balance(env: &Env) -> i128 {
+    env.storage().instance().get(&DataKey::MinProposalBalance).unwrap_or(0)
+}
+
+pub fn set_proposal_cooldown(env: &Env, v: u64) {
+    env.storage().instance().set(&DataKey::ProposalCooldown, &v);
+}
+
+pub fn get_proposal_cooldown(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::ProposalCooldown).unwrap_or(0)
+}
+
+pub fn set_last_proposal(env: &Env, proposer: &Address, ts: u64) {
+    env.storage().persistent().set(&DataKey::LastProposal(proposer.clone()), &ts);
+}
+
+pub fn get_last_proposal(env: &Env, proposer: &Address) -> u64 {
+    env.storage().persistent().get(&DataKey::LastProposal(proposer.clone())).unwrap_or(0)
 }
 /// Stores the contract version as a `(major, minor, patch)` tuple.
 pub fn set_version(env: &Env, version: (u32, u32, u32)) {
