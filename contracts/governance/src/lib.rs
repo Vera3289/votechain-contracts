@@ -87,6 +87,8 @@ impl GovernanceContract {
         proposer.require_auth();
         if quorum <= 0 { return Err(ContractError::InvalidQuorum); }
         if duration == 0 { return Err(ContractError::InvalidDuration); }
+        let min = get_min_quorum(&env);
+        if min > 0 && quorum < min { return Err(ContractError::BelowMinQuorum); }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
 
