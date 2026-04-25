@@ -74,4 +74,5 @@ pub enum DataKey {
     HasVoted(u64, Address),  // (proposal_id, voter)
     Admin,
     VotingToken,
+    Version,
 }

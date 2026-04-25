@@ -21,6 +21,7 @@ impl TokenContract {
         set_admin(&env, &admin);
         set_balance(&env, &admin, initial_supply);
         set_total_supply(&env, initial_supply);
+        set_version(&env, (1, 0, 0));
     }
 
     pub fn total_supply(env: Env) -> i128 { total_supply(&env) }
@@ -71,5 +72,10 @@ impl TokenContract {
         set_balance(&env, &from, b - amount);
         set_total_supply(&env, total_supply(&env) - amount);
         Ok(())
+    }
+
+    /// Returns the contract version as a `(major, minor, patch)` semver tuple.
+    pub fn get_version(env: Env) -> (u32, u32, u32) {
+        get_version(&env)
     }
 }
