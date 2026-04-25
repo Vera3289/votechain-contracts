@@ -31,6 +31,10 @@ pub enum ContractError {
     ProposalNotPassed = 12,
     /// 13 – Contract has already been initialized
     AlreadyInitialized = 13,
+    /// 14 – Proposer's token balance is below the required minimum
+    InsufficientBalance = 14,
+    /// 15 – Proposer must wait for the cooldown period to elapse
+    ProposalCooldown = 15,
 }
 
 #[contracttype]
@@ -71,7 +75,10 @@ pub struct Proposal {
 pub enum DataKey {
     Proposal(u64),
     ProposalCount,
-    HasVoted(u64, Address),  // (proposal_id, voter)
+    HasVoted(u64, Address),      // (proposal_id, voter)
     Admin,
     VotingToken,
+    MinProposalBalance,          // i128: minimum token balance to create a proposal
+    ProposalCooldown,            // u64:  seconds between proposals per address
+    LastProposal(Address),       // u64:  timestamp of proposer's last proposal
 }

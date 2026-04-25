@@ -13,6 +13,9 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
     get_admin, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
     next_id, save_proposal, set_admin, set_voting_token,
+    set_min_proposal_balance, get_min_proposal_balance,
+    set_proposal_cooldown, get_proposal_cooldown,
+    set_last_proposal, get_last_proposal,
 };
 use types::{ContractError, DataKey, Proposal, ProposalStatus, Vote};
 
@@ -21,11 +24,19 @@ pub struct GovernanceContract;
 
 #[contractimpl]
 impl GovernanceContract {
-    pub fn initialize(env: Env, admin: Address, voting_token: Address) -> Result<(), ContractError> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        voting_token: Address,
+        min_proposal_balance: i128,
+        proposal_cooldown: u64,
+    ) -> Result<(), ContractError> {
         if is_initialized(&env) { return Err(ContractError::AlreadyInitialized); }
         admin.require_auth();
         set_admin(&env, &admin);
         set_voting_token(&env, &voting_token);
+        if min_proposal_balance > 0 { set_min_proposal_balance(&env, min_proposal_balance); }
+        if proposal_cooldown > 0 { set_proposal_cooldown(&env, proposal_cooldown); }
         Ok(())
     }
 
@@ -40,6 +51,21 @@ impl GovernanceContract {
         proposer.require_auth();
         if quorum <= 0 { return Err(ContractError::InvalidQuorum); }
         if duration == 0 { return Err(ContractError::InvalidDuration); }
+
+        let token_client = token::Client::new(&env, &get_voting_token(&env)?);
+
+        let min_balance = get_min_proposal_balance(&env);
+        if min_balance > 0 {
+            let balance = token_client.balance(&proposer);
+            if balance < min_balance { return Err(ContractError::InsufficientBalance); }
+        }
+
+        let cooldown = get_proposal_cooldown(&env);
+        if cooldown > 0 {
+            let now = env.ledger().timestamp();
+            let last = get_last_proposal(&env, &proposer);
+            if last > 0 && now < last + cooldown { return Err(ContractError::ProposalCooldown); }
+        }
 
         let now = env.ledger().timestamp();
         let id = next_id(&env);
@@ -57,6 +83,7 @@ impl GovernanceContract {
             status: ProposalStatus::Active,
         };
         save_proposal(&env, &proposal);
+        set_last_proposal(&env, &proposer, now);
         events::proposal_created(&env, id, &proposer);
         Ok(id)
     }
