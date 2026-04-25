@@ -147,7 +147,7 @@ impl GovernanceContract {
     pub fn cast_vote(env: Env, voter: Address, proposal_id: u64, vote: Vote) -> Result<(), ContractError> {
         voter.require_auth();
 
-        let mut proposal = load_proposal(&env, proposal_id)?;
+        let proposal = load_proposal(&env, proposal_id)?;
         if proposal.status != ProposalStatus::Active {
             return Err(ContractError::ProposalNotActive);
         }
@@ -156,10 +156,14 @@ impl GovernanceContract {
         if now > proposal.end_time { return Err(ContractError::VotingPeriodEnded); }
         if has_voted(&env, proposal_id, &voter) { return Err(ContractError::AlreadyVoted); }
 
+        // Fetch token balance with error handling
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
-        let weight = token_client.balance(&voter);
+        let weight = token_client.try_balance(&voter).map_err(|_| ContractError::TokenContractError)?;
+        
         if weight <= 0 { return Err(ContractError::NoVotingPower); }
 
+        // All checks passed - now update state atomically
+        let mut proposal = proposal;
         match vote {
             Vote::Yes     => proposal.votes_yes     = proposal.votes_yes.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
             Vote::No      => proposal.votes_no      = proposal.votes_no.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
