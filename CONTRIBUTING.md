@@ -13,6 +13,7 @@ make test
 
 ## Standards
 
+- Run `cargo fmt` before every commit (CI enforces `cargo fmt --check`)
 - Pass `cargo clippy -- -D warnings` and `cargo fmt --check`
 - Every new function needs a test in `test.rs`
 - Emit events for all state-changing operations
@@ -29,6 +30,7 @@ test: add quorum boundary test cases
 ```
 
 ## PR Checklist
+- [ ] `make fmt` run locally before pushing
 - [ ] `make test` passes
 - [ ] `make lint` passes
 - [ ] `make fmt-check` passes
