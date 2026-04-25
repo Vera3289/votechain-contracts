@@ -83,6 +83,8 @@ Active → Passed   → Executed
        → Cancelled
 ```
 
+Full state diagram, transition conditions, and edge cases: [docs/lifecycle.md](docs/lifecycle.md)
+
 ### Pass Conditions
 
 ```
@@ -135,7 +137,7 @@ NETWORK=mainnet ./scripts/deploy.sh
 ## FAQ
 
 Common questions about VoteChain, Soroban, voting mechanics, token requirements, and proposal creation are answered in [docs/faq.md](docs/faq.md).
-
+c
 ## Upgrading
 
 Step-by-step instructions for upgrading deployed contracts, rolling back to a previous version, and the version compatibility matrix are in [docs/upgrading.md](docs/upgrading.md).
