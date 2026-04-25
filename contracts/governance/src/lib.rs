@@ -8,6 +8,8 @@ mod types;
 mod test;
 #[cfg(test)]
 pub mod test_helpers;
+#[cfg(test)]
+mod prop_tests;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
@@ -139,6 +141,7 @@ impl GovernanceContract {
     /// - [`ContractError::VotingPeriodEnded`] if the voting window has closed.
     /// - [`ContractError::AlreadyVoted`] if the voter has already voted on this proposal.
     /// - [`ContractError::NoVotingPower`] if the voter's token balance is zero.
+    /// - [`ContractError::VoteTallyOverflow`] if adding the vote weight would overflow `i128`.
     pub fn cast_vote(env: Env, voter: Address, proposal_id: u64, vote: Vote) -> Result<(), ContractError> {
         voter.require_auth();
 
@@ -156,9 +159,9 @@ impl GovernanceContract {
         if weight <= 0 { return Err(ContractError::NoVotingPower); }
 
         match vote {
-            Vote::Yes     => proposal.votes_yes     = proposal.votes_yes.checked_add(weight).expect("vote tally overflow"),
-            Vote::No      => proposal.votes_no      = proposal.votes_no.checked_add(weight).expect("vote tally overflow"),
-            Vote::Abstain => proposal.votes_abstain = proposal.votes_abstain.checked_add(weight).expect("vote tally overflow"),
+            Vote::Yes     => proposal.votes_yes     = proposal.votes_yes.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
+            Vote::No      => proposal.votes_no      = proposal.votes_no.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
+            Vote::Abstain => proposal.votes_abstain = proposal.votes_abstain.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
         }
 
         mark_voted(&env, proposal_id, &voter);
