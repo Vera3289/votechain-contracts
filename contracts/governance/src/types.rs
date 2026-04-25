@@ -81,4 +81,5 @@ pub enum DataKey {
     MinProposalBalance,          // i128: minimum token balance to create a proposal
     ProposalCooldown,            // u64:  seconds between proposals per address
     LastProposal(Address),       // u64:  timestamp of proposer's last proposal
+    Version,
 }
