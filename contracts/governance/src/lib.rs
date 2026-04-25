@@ -8,9 +8,16 @@ mod types;
 mod test;
 #[cfg(test)]
 pub mod test_helpers;
+#[cfg(test)]
+mod prop_tests;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
+    get_admin, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
+    next_id, save_proposal, set_admin, set_voting_token,
+    set_min_proposal_balance, get_min_proposal_balance,
+    set_proposal_cooldown, get_proposal_cooldown,
+    set_last_proposal, get_last_proposal,
     get_admin, get_version, get_voting_token, has_voted, is_initialized, load_proposal,
     mark_voted, next_id, save_proposal, set_admin, set_version, set_voting_token,
 };
@@ -21,6 +28,13 @@ pub struct GovernanceContract;
 
 #[contractimpl]
 impl GovernanceContract {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        voting_token: Address,
+        min_proposal_balance: i128,
+        proposal_cooldown: u64,
+    ) -> Result<(), ContractError> {
     /// Initialises the governance contract with an admin and a voting token.
     ///
     /// Must be called exactly once before any other function.
@@ -37,6 +51,8 @@ impl GovernanceContract {
         admin.require_auth();
         set_admin(&env, &admin);
         set_voting_token(&env, &voting_token);
+        if min_proposal_balance > 0 { set_min_proposal_balance(&env, min_proposal_balance); }
+        if proposal_cooldown > 0 { set_proposal_cooldown(&env, proposal_cooldown); }
         set_version(&env, (1, 0, 0));
         Ok(())
     }
@@ -71,6 +87,23 @@ impl GovernanceContract {
         proposer.require_auth();
         if quorum <= 0 { return Err(ContractError::InvalidQuorum); }
         if duration == 0 { return Err(ContractError::InvalidDuration); }
+        let min = get_min_quorum(&env);
+        if min > 0 && quorum < min { return Err(ContractError::BelowMinQuorum); }
+
+        let token_client = token::Client::new(&env, &get_voting_token(&env)?);
+
+        let min_balance = get_min_proposal_balance(&env);
+        if min_balance > 0 {
+            let balance = token_client.balance(&proposer);
+            if balance < min_balance { return Err(ContractError::InsufficientBalance); }
+        }
+
+        let cooldown = get_proposal_cooldown(&env);
+        if cooldown > 0 {
+            let now = env.ledger().timestamp();
+            let last = get_last_proposal(&env, &proposer);
+            if last > 0 && now < last + cooldown { return Err(ContractError::ProposalCooldown); }
+        }
 
         let now = env.ledger().timestamp();
         let id = next_id(&env);
@@ -88,6 +121,7 @@ impl GovernanceContract {
             status: ProposalStatus::Active,
         };
         save_proposal(&env, &proposal);
+        set_last_proposal(&env, &proposer, now);
         events::proposal_created(&env, id, &proposer);
         Ok(id)
     }
@@ -109,7 +143,7 @@ impl GovernanceContract {
     /// - [`ContractError::VotingPeriodEnded`] if the voting window has closed.
     /// - [`ContractError::AlreadyVoted`] if the voter has already voted on this proposal.
     /// - [`ContractError::NoVotingPower`] if the voter's token balance is zero.
-    /// - [`ContractError::TokenContractError`] if the token contract call fails.
+    /// - [`ContractError::VoteTallyOverflow`] if adding the vote weight would overflow `i128`.
     pub fn cast_vote(env: Env, voter: Address, proposal_id: u64, vote: Vote) -> Result<(), ContractError> {
         voter.require_auth();
 
@@ -131,9 +165,9 @@ impl GovernanceContract {
         // All checks passed - now update state atomically
         let mut proposal = proposal;
         match vote {
-            Vote::Yes     => proposal.votes_yes     = proposal.votes_yes.checked_add(weight).expect("vote tally overflow"),
-            Vote::No      => proposal.votes_no      = proposal.votes_no.checked_add(weight).expect("vote tally overflow"),
-            Vote::Abstain => proposal.votes_abstain = proposal.votes_abstain.checked_add(weight).expect("vote tally overflow"),
+            Vote::Yes     => proposal.votes_yes     = proposal.votes_yes.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
+            Vote::No      => proposal.votes_no      = proposal.votes_no.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
+            Vote::Abstain => proposal.votes_abstain = proposal.votes_abstain.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
         }
 
         mark_voted(&env, proposal_id, &voter);

@@ -1,0 +1,24 @@
+services:
+  dev:
+    build: .
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+    working_dir: /app
+    environment:
+      - NETWORK=local
+    depends_on:
+      - stellar-node
+    stdin_open: true
+    tty: true
+
+  stellar-node:
+    image: stellar/quickstart:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - ENABLE_SOROBAN_RPC=true
+    command: --local
+
+volumes:
+  cargo-cache:

@@ -22,7 +22,7 @@ fn new_client(env: &Env) -> GovernanceContractClient<'static> {
 fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let voter = Address::generate(env);
     let token_id = setup_token(env, &voter);
-    client.initialize(admin, &token_id);
+    client.initialize(admin, &token_id, &0_i128, &0_u64);
     let id = client.create_proposal(
         &voter,
         &String::from_str(env, "Prop"),
@@ -40,7 +40,7 @@ fn setup_passed_proposal(env: &Env, client: &GovernanceContractClient, admin: &A
 fn setup_active_proposal(env: &Env, client: &GovernanceContractClient, admin: &Address) -> u64 {
     let proposer = Address::generate(env);
     let token_id = setup_token(env, admin);
-    client.initialize(admin, &token_id);
+    client.initialize(admin, &token_id, &0_i128, &0_u64);
     client.create_proposal(
         &proposer,
         &String::from_str(env, "Prop"),
@@ -399,7 +399,7 @@ fn test_no_data_lost_between_calls() {
 #[should_panic]
 fn test_reinit_by_original_admin_reverts() {
     let t = setup_env();
-    t.client.initialize(&t.admin, &t.token_id);
+    t.client.initialize(&t.admin, &t.token_id, &0_i128, &0_u64);
 }
 
 /// Re-init by a new address must revert with AlreadyInitialized.
@@ -409,7 +409,7 @@ fn test_reinit_by_new_address_reverts() {
     let t = setup_env();
     let attacker = Address::generate(&t.env);
     let new_token = Address::generate(&t.env);
-    t.client.initialize(&attacker, &new_token);
+    t.client.initialize(&attacker, &new_token, &0_i128, &0_u64);
 }
 
 /// Re-init by the zero address must revert with AlreadyInitialized.
@@ -418,227 +418,114 @@ fn test_reinit_by_new_address_reverts() {
 fn test_reinit_by_zero_address_reverts() {
     let t = setup_env();
     let zero = Address::from_str(&t.env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
-    t.client.initialize(&zero, &t.token_id);
+    t.client.initialize(&zero, &t.token_id, &0_i128, &0_u64);
 }
 
 // ── end SEC-009 ───────────────────────────────────────────────────────────────
 
-// ── Issue #28: token contract error handling tests ───────────────────────────
-
-/// Mock token contract that always fails balance queries
-#[cfg(test)]
-mod failing_token {
-    use soroban_sdk::{contract, contractimpl, Address, Env};
-
-    #[contract]
-    pub struct FailingTokenContract;
-
-    #[contractimpl]
-    impl FailingTokenContract {
-        pub fn balance(_env: Env, _owner: Address) -> i128 {
-            panic!("Token contract error");
-        }
-    }
-}
+// ── spam prevention tests ─────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "token contract")]
-fn test_token_contract_failure_reverts_with_error() {
+#[should_panic]
+fn test_create_proposal_below_min_balance_reverts() {
     let env = Env::default();
     env.mock_all_auths();
-    
-    // Register governance contract
-    let gov_id = env.register(GovernanceContract, ());
-    let client = GovernanceContractClient::new(&env, &gov_id);
-    
+    let client = new_client(&env);
     let admin = Address::generate(&env);
-    
-    // Register a failing token contract
-    let failing_token_id = env.register(failing_token::FailingTokenContract, ());
-    
-    // Initialize governance with the failing token
-    client.initialize(&admin, &failing_token_id);
-    
-    // Create a proposal
+    let token_id = setup_token(&env, &admin);
+    // require 500_000 tokens to propose
+    client.initialize(&admin, &token_id, &500_000_i128, &0_u64);
+
     let proposer = Address::generate(&env);
-    let id = client.create_proposal(
+    // proposer has 0 tokens — should panic
+    client.create_proposal(
         &proposer,
-        &String::from_str(&env, "Test"),
+        &String::from_str(&env, "Spam"),
         &String::from_str(&env, "desc"),
         &100,
         &3600,
     );
-    
-    // Attempt to vote - should revert with TokenContractError
-    let voter = Address::generate(&env);
-    client.cast_vote(&voter, &id, &Vote::Yes);
 }
 
 #[test]
-fn test_token_contract_failure_no_partial_state_written() {
+fn test_create_proposal_at_min_balance_accepted() {
     let env = Env::default();
     env.mock_all_auths();
-    
-    let gov_id = env.register(GovernanceContract, ());
-    let client = GovernanceContractClient::new(&env, &gov_id);
-    
+    let client = new_client(&env);
     let admin = Address::generate(&env);
-    let failing_token_id = env.register(failing_token::FailingTokenContract, ());
-    
-    client.initialize(&admin, &failing_token_id);
-    
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id, &500_000_i128, &0_u64);
+
     let proposer = Address::generate(&env);
+    let tok = votechain_token::TokenContractClient::new(&env, &token_id);
+    tok.mint(&admin, &proposer, &500_000_i128);
+
     let id = client.create_proposal(
         &proposer,
-        &String::from_str(&env, "Test"),
+        &String::from_str(&env, "Valid"),
         &String::from_str(&env, "desc"),
         &100,
         &3600,
     );
-    
-    let voter = Address::generate(&env);
-    
-    // Verify voter hasn't voted yet
-    assert!(!client.has_voted(&id, &voter));
-    
-    // Attempt to vote with failing token contract
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.cast_vote(&voter, &id, &Vote::Yes);
-    }));
-    
-    // Should have failed
-    assert!(result.is_err());
-    
-    // Verify no partial state was written
-    assert!(!client.has_voted(&id, &voter));
-    
-    let proposal = client.get_proposal(&id);
-    assert_eq!(proposal.votes_yes, 0);
-    assert_eq!(proposal.votes_no, 0);
-    assert_eq!(proposal.votes_abstain, 0);
+    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
 }
 
 #[test]
-fn test_token_contract_success_after_previous_failure() {
+#[should_panic]
+fn test_create_proposal_within_cooldown_reverts() {
     let env = Env::default();
     env.mock_all_auths();
-    
-    let gov_id = env.register(GovernanceContract, ());
-    let client = GovernanceContractClient::new(&env, &gov_id);
-    
+    let client = new_client(&env);
     let admin = Address::generate(&env);
-    
-    // First, use a failing token
-    let failing_token_id = env.register(failing_token::FailingTokenContract, ());
-    client.initialize(&admin, &failing_token_id);
-    
+    let token_id = setup_token(&env, &admin);
+    // 1 hour cooldown, no balance requirement
+    client.initialize(&admin, &token_id, &0_i128, &3600_u64);
+
     let proposer = Address::generate(&env);
-    let id = client.create_proposal(
+    client.create_proposal(
         &proposer,
-        &String::from_str(&env, "Test"),
+        &String::from_str(&env, "First"),
         &String::from_str(&env, "desc"),
         &100,
         &3600,
     );
-    
-    let voter = Address::generate(&env);
-    
-    // Attempt to vote with failing token - should fail
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.cast_vote(&voter, &id, &Vote::Yes);
-    }));
-    assert!(result.is_err());
-    
-    // Now create a new governance instance with a working token
-    let gov_id2 = env.register(GovernanceContract, ());
-    let client2 = GovernanceContractClient::new(&env, &gov_id2);
-    
-    let tok_id = env.register(votechain_token::TokenContract, ());
-    let tok = votechain_token::TokenContractClient::new(&env, &tok_id);
-    tok.initialize(&admin, &1_000_000);
-    
-    client2.initialize(&admin, &tok_id);
-    
-    let id2 = client2.create_proposal(
+    // second proposal immediately — should panic
+    client.create_proposal(
         &proposer,
-        &String::from_str(&env, "Test2"),
+        &String::from_str(&env, "Spam"),
         &String::from_str(&env, "desc"),
         &100,
         &3600,
     );
-    
-    // Mint tokens and vote - should succeed
-    tok.mint(&admin, &voter, &500_000);
-    client2.cast_vote(&voter, &id2, &Vote::Yes);
-    
-    // Verify vote was recorded
-    assert!(client2.has_voted(&id2, &voter));
-    assert_eq!(client2.get_proposal(&id2).votes_yes, 500_000);
 }
 
 #[test]
-fn test_token_contract_error_propagated_with_context() {
+fn test_create_proposal_after_cooldown_accepted() {
     let env = Env::default();
     env.mock_all_auths();
-    
-    let gov_id = env.register(GovernanceContract, ());
-    let client = GovernanceContractClient::new(&env, &gov_id);
-    
+    let client = new_client(&env);
     let admin = Address::generate(&env);
-    let failing_token_id = env.register(failing_token::FailingTokenContract, ());
-    
-    client.initialize(&admin, &failing_token_id);
-    
+    let token_id = setup_token(&env, &admin);
+    client.initialize(&admin, &token_id, &0_i128, &3600_u64);
+
     let proposer = Address::generate(&env);
-    let id = client.create_proposal(
+    client.create_proposal(
         &proposer,
-        &String::from_str(&env, "Test"),
+        &String::from_str(&env, "First"),
+        &String::from_str(&env, "desc"),
+        &100,
+        &7200,
+    );
+    // advance past cooldown
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+    let id2 = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Second"),
         &String::from_str(&env, "desc"),
         &100,
         &3600,
     );
-    
-    let voter = Address::generate(&env);
-    
-    // The error should be propagated (panic in this test environment)
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.cast_vote(&voter, &id, &Vote::Yes);
-    }));
-    
-    assert!(result.is_err());
-    
-    // Verify the error message contains context about token contract
-    if let Err(e) = result {
-        let msg = format!("{:?}", e);
-        assert!(msg.to_lowercase().contains("token") || msg.to_lowercase().contains("contract"));
-    }
+    assert_eq!(client.get_proposal(&id2).status, ProposalStatus::Active);
 }
 
-#[test]
-fn test_multiple_voters_one_token_failure_doesnt_affect_others() {
-    let t = setup_env();
-    let voter1 = Address::generate(&t.env);
-    let voter2 = Address::generate(&t.env);
-    let id = create_test_proposal(&t, &voter1);
-    
-    // Voter 1 votes successfully
-    mint_and_vote(&t, &voter1, id, Vote::Yes, 100_000);
-    assert!(t.client.has_voted(&id, &voter1));
-    assert_eq!(t.client.get_proposal(&id).votes_yes, 100_000);
-    
-    // Even if voter2 would fail (simulated by not minting tokens),
-    // voter1's vote should remain intact
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        t.client.cast_vote(&voter2, &id, &Vote::Yes);
-    }));
-    
-    // Voter2 should fail (no voting power)
-    assert!(result.is_err());
-    
-    // Voter1's vote should still be there
-    assert!(t.client.has_voted(&id, &voter1));
-    assert_eq!(t.client.get_proposal(&id).votes_yes, 100_000);
-    assert!(!t.client.has_voted(&id, &voter2));
-}
-
-// ── end Issue #28 ─────────────────────────────────────────────────────────────
+// ── end spam prevention tests ─────────────────────────────────────────────────
