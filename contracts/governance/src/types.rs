@@ -77,4 +77,5 @@ pub enum DataKey {
     Admin,
     VotingToken,
     MinQuorum,
+    Version,
 }
