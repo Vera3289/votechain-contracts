@@ -61,6 +61,46 @@ make build
 
 ---
 
+## Docker Usage
+
+A reproducible development environment is provided via Docker.
+
+**Prerequisites:** Docker and Docker Compose installed.
+
+### Start the full environment (dev container + local Stellar node)
+
+```bash
+docker compose up
+```
+
+This starts two services:
+- `dev` — Rust + wasm32 + Stellar CLI, with the repo mounted at `/app`
+- `stellar-node` — local Stellar node with Soroban RPC on `http://localhost:8000`
+
+### Run a one-off command
+
+```bash
+docker compose run --rm dev make test
+docker compose run --rm dev make build
+docker compose run --rm dev stellar contract build
+```
+
+### Open an interactive shell
+
+```bash
+docker compose run --rm dev bash
+```
+
+### Deploy to the local node from inside the container
+
+```bash
+docker compose run --rm dev bash -c "NETWORK=local ./scripts/deploy.sh"
+```
+
+> The local Stellar node RPC is available at `http://stellar-node:8000` from within the container, or `http://localhost:8000` from the host.
+
+---
+
 ## Governance Contract Reference
 
 | Function | Caller | Description |
