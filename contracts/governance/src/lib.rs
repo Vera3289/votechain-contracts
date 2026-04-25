@@ -8,6 +8,8 @@ mod types;
 mod test;
 #[cfg(test)]
 pub mod test_helpers;
+#[cfg(test)]
+mod prop_tests;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
