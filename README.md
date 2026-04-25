@@ -136,6 +136,10 @@ NETWORK=mainnet ./scripts/deploy.sh
 
 Common questions about VoteChain, Soroban, voting mechanics, token requirements, and proposal creation are answered in [docs/faq.md](docs/faq.md).
 
+## Upgrading
+
+Step-by-step instructions for upgrading deployed contracts, rolling back to a previous version, and the version compatibility matrix are in [docs/upgrading.md](docs/upgrading.md).
+
 ## API Documentation
 
 Every public function in both contracts is documented with `///` doc comments (description, parameters, return value, and errors).
