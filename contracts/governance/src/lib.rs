@@ -13,13 +13,10 @@ mod prop_tests;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
-    get_admin, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
-    next_id, save_proposal, set_admin, set_voting_token,
-    set_min_proposal_balance, get_min_proposal_balance,
-    set_proposal_cooldown, get_proposal_cooldown,
-    set_last_proposal, get_last_proposal,
-    get_admin, get_version, get_voting_token, has_voted, is_initialized, load_proposal,
-    mark_voted, next_id, save_proposal, set_admin, set_version, set_voting_token,
+    get_admin, get_last_proposal, get_min_proposal_balance, get_proposal_cooldown,
+    get_version, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
+    next_id, save_proposal, set_admin, set_last_proposal, set_min_proposal_balance,
+    set_proposal_cooldown, set_version, set_voting_token,
 };
 use types::{ContractError, DataKey, Proposal, ProposalStatus, Vote};
 
@@ -28,6 +25,12 @@ pub struct GovernanceContract;
 
 #[contractimpl]
 impl GovernanceContract {
+    /// Initialises the governance contract with an admin and a voting token.
+    ///
+    /// Must be called exactly once before any other function.
+    ///
+    /// # Errors
+    /// - [`ContractError::AlreadyInitialized`] if the contract has already been initialised.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -35,47 +38,29 @@ impl GovernanceContract {
         min_proposal_balance: i128,
         proposal_cooldown: u64,
     ) -> Result<(), ContractError> {
-    /// Initialises the governance contract with an admin and a voting token.
-    ///
-    /// Must be called exactly once before any other function.
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `admin` – Address that will have admin privileges (execute, cancel, update quorum).
-    /// - `voting_token` – Address of the SEP-41 token used to determine vote weight.
-    ///
-    /// # Errors
-    /// - [`ContractError::AlreadyInitialized`] if the contract has already been initialised.
-    pub fn initialize(env: Env, admin: Address, voting_token: Address) -> Result<(), ContractError> {
-        if is_initialized(&env) { return Err(ContractError::AlreadyInitialized); }
+        if is_initialized(&env) {
+            return Err(ContractError::AlreadyInitialized);
+        }
         admin.require_auth();
         set_admin(&env, &admin);
         set_voting_token(&env, &voting_token);
-        if min_proposal_balance > 0 { set_min_proposal_balance(&env, min_proposal_balance); }
-        if proposal_cooldown > 0 { set_proposal_cooldown(&env, proposal_cooldown); }
+        if min_proposal_balance > 0 {
+            set_min_proposal_balance(&env, min_proposal_balance);
+        }
+        if proposal_cooldown > 0 {
+            set_proposal_cooldown(&env, proposal_cooldown);
+        }
         set_version(&env, (1, 0, 0));
         Ok(())
     }
 
     /// Creates a new governance proposal.
     ///
-    /// The proposal starts in [`ProposalStatus::Active`] and accepts votes until
-    /// `start_time + duration` (ledger timestamp).
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `proposer` – Address creating the proposal; must authorise the call.
-    /// - `title` – Short human-readable title.
-    /// - `description` – Full proposal description.
-    /// - `quorum` – Minimum total weighted votes required for the proposal to pass.
-    /// - `duration` – Voting window in seconds (added to the current ledger timestamp).
-    ///
-    /// # Returns
-    /// The numeric ID assigned to the new proposal.
-    ///
     /// # Errors
     /// - [`ContractError::InvalidQuorum`] if `quorum` is zero or negative.
     /// - [`ContractError::InvalidDuration`] if `duration` is zero.
+    /// - [`ContractError::InsufficientBalance`] if proposer balance is below minimum.
+    /// - [`ContractError::ProposalCooldown`] if proposer is within cooldown period.
     pub fn create_proposal(
         env: Env,
         proposer: Address,
@@ -85,24 +70,30 @@ impl GovernanceContract {
         duration: u64,
     ) -> Result<u64, ContractError> {
         proposer.require_auth();
-        if quorum <= 0 { return Err(ContractError::InvalidQuorum); }
-        if duration == 0 { return Err(ContractError::InvalidDuration); }
-        let min = get_min_quorum(&env);
-        if min > 0 && quorum < min { return Err(ContractError::BelowMinQuorum); }
+        if quorum <= 0 {
+            return Err(ContractError::InvalidQuorum);
+        }
+        if duration == 0 {
+            return Err(ContractError::InvalidDuration);
+        }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
 
         let min_balance = get_min_proposal_balance(&env);
         if min_balance > 0 {
             let balance = token_client.balance(&proposer);
-            if balance < min_balance { return Err(ContractError::InsufficientBalance); }
+            if balance < min_balance {
+                return Err(ContractError::InsufficientBalance);
+            }
         }
 
         let cooldown = get_proposal_cooldown(&env);
         if cooldown > 0 {
             let now = env.ledger().timestamp();
             let last = get_last_proposal(&env, &proposer);
-            if last > 0 && now < last + cooldown { return Err(ContractError::ProposalCooldown); }
+            if last > 0 && now < last + cooldown {
+                return Err(ContractError::ProposalCooldown);
+            }
         }
 
         let now = env.ledger().timestamp();
@@ -131,12 +122,6 @@ impl GovernanceContract {
     /// Vote weight equals the voter's current governance token balance.
     /// Each address may vote at most once per proposal.
     ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `voter` – Address casting the vote; must authorise the call.
-    /// - `proposal_id` – ID of the proposal to vote on.
-    /// - `vote` – [`Vote::Yes`], [`Vote::No`], or [`Vote::Abstain`].
-    ///
     /// # Errors
     /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
     /// - [`ContractError::ProposalNotActive`] if the proposal is not in `Active` status.
@@ -144,30 +129,52 @@ impl GovernanceContract {
     /// - [`ContractError::AlreadyVoted`] if the voter has already voted on this proposal.
     /// - [`ContractError::NoVotingPower`] if the voter's token balance is zero.
     /// - [`ContractError::VoteTallyOverflow`] if adding the vote weight would overflow `i128`.
-    pub fn cast_vote(env: Env, voter: Address, proposal_id: u64, vote: Vote) -> Result<(), ContractError> {
+    pub fn cast_vote(
+        env: Env,
+        voter: Address,
+        proposal_id: u64,
+        vote: Vote,
+    ) -> Result<(), ContractError> {
         voter.require_auth();
 
-        let proposal = load_proposal(&env, proposal_id)?;
+        let mut proposal = load_proposal(&env, proposal_id)?;
         if proposal.status != ProposalStatus::Active {
             return Err(ContractError::ProposalNotActive);
         }
 
         let now = env.ledger().timestamp();
-        if now > proposal.end_time { return Err(ContractError::VotingPeriodEnded); }
-        if has_voted(&env, proposal_id, &voter) { return Err(ContractError::AlreadyVoted); }
+        if now > proposal.end_time {
+            return Err(ContractError::VotingPeriodEnded);
+        }
+        if has_voted(&env, proposal_id, &voter) {
+            return Err(ContractError::AlreadyVoted);
+        }
 
-        // Fetch token balance with error handling
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
-        let weight = token_client.try_balance(&voter).map_err(|_| ContractError::TokenContractError)?;
-        
-        if weight <= 0 { return Err(ContractError::NoVotingPower); }
+        let weight = token_client.balance(&voter);
+        if weight <= 0 {
+            return Err(ContractError::NoVotingPower);
+        }
 
-        // All checks passed - now update state atomically
-        let mut proposal = proposal;
         match vote {
-            Vote::Yes     => proposal.votes_yes     = proposal.votes_yes.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
-            Vote::No      => proposal.votes_no      = proposal.votes_no.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
-            Vote::Abstain => proposal.votes_abstain = proposal.votes_abstain.checked_add(weight).ok_or(ContractError::VoteTallyOverflow)?,
+            Vote::Yes => {
+                proposal.votes_yes = proposal
+                    .votes_yes
+                    .checked_add(weight)
+                    .ok_or(ContractError::VoteTallyOverflow)?
+            }
+            Vote::No => {
+                proposal.votes_no = proposal
+                    .votes_no
+                    .checked_add(weight)
+                    .ok_or(ContractError::VoteTallyOverflow)?
+            }
+            Vote::Abstain => {
+                proposal.votes_abstain = proposal
+                    .votes_abstain
+                    .checked_add(weight)
+                    .ok_or(ContractError::VoteTallyOverflow)?
+            }
         }
 
         mark_voted(&env, proposal_id, &voter);
@@ -177,14 +184,6 @@ impl GovernanceContract {
     }
 
     /// Finalises a proposal after its voting period has ended.
-    ///
-    /// Sets the status to [`ProposalStatus::Passed`] when
-    /// `total_votes >= quorum && votes_yes > votes_no`, otherwise
-    /// [`ProposalStatus::Rejected`]. Can be called by anyone.
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `proposal_id` – ID of the proposal to finalise.
     ///
     /// # Errors
     /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
@@ -200,26 +199,19 @@ impl GovernanceContract {
         }
 
         let total = proposal.votes_yes + proposal.votes_no + proposal.votes_abstain;
-        proposal.status = if total >= proposal.quorum && proposal.votes_yes > proposal.votes_no {
-            ProposalStatus::Passed
-        } else {
-            ProposalStatus::Rejected
-        };
+        proposal.status =
+            if total >= proposal.quorum && proposal.votes_yes > proposal.votes_no {
+                ProposalStatus::Passed
+            } else {
+                ProposalStatus::Rejected
+            };
 
         save_proposal(&env, &proposal);
         events::proposal_finalised(&env, proposal_id, &proposal.status);
         Ok(())
     }
 
-    /// Marks a passed proposal as executed.
-    ///
-    /// Only the admin may call this function. Execution is a bookkeeping step;
-    /// on-chain side-effects must be handled by the calling application.
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `admin` – Admin address; must authorise the call.
-    /// - `proposal_id` – ID of the proposal to execute.
+    /// Marks a passed proposal as executed. Only admin may call this.
     ///
     /// # Errors
     /// - [`ContractError::NotAdmin`] if `admin` does not match the stored admin.
@@ -227,7 +219,9 @@ impl GovernanceContract {
     /// - [`ContractError::ProposalNotPassed`] if the proposal has not passed.
     pub fn execute(env: Env, admin: Address, proposal_id: u64) -> Result<(), ContractError> {
         admin.require_auth();
-        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
+        if get_admin(&env)? != admin {
+            return Err(ContractError::NotAdmin);
+        }
         let mut proposal = load_proposal(&env, proposal_id)?;
         if proposal.status != ProposalStatus::Passed {
             return Err(ContractError::ProposalNotPassed);
@@ -238,15 +232,7 @@ impl GovernanceContract {
         Ok(())
     }
 
-    /// Cancels an active proposal.
-    ///
-    /// Only the admin may cancel a proposal. Once cancelled the proposal
-    /// cannot be re-opened.
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `admin` – Admin address; must authorise the call.
-    /// - `proposal_id` – ID of the proposal to cancel.
+    /// Cancels an active proposal. Only admin may call this.
     ///
     /// # Errors
     /// - [`ContractError::NotAdmin`] if `admin` does not match the stored admin.
@@ -254,36 +240,39 @@ impl GovernanceContract {
     /// - [`ContractError::ProposalNotActive`] if the proposal is not in `Active` status.
     pub fn cancel(env: Env, admin: Address, proposal_id: u64) -> Result<(), ContractError> {
         admin.require_auth();
-        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
+        if get_admin(&env)? != admin {
+            return Err(ContractError::NotAdmin);
+        }
         let mut proposal = load_proposal(&env, proposal_id)?;
         if proposal.status != ProposalStatus::Active {
             return Err(ContractError::ProposalNotActive);
         }
         proposal.status = ProposalStatus::Cancelled;
         save_proposal(&env, &proposal);
-        events::proposal_finalised(&env, proposal_id, &ProposalStatus::Cancelled);
+        events::proposal_cancelled(&env, proposal_id);
         Ok(())
     }
 
-    /// Updates the quorum threshold of an active proposal.
-    ///
-    /// Only the admin may change the quorum. The proposal must still be active.
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `admin` – Admin address; must authorise the call.
-    /// - `proposal_id` – ID of the proposal to update.
-    /// - `new_quorum` – New minimum total weighted votes required to pass.
+    /// Updates the quorum threshold of an active proposal. Only admin may call this.
     ///
     /// # Errors
     /// - [`ContractError::NotAdmin`] if `admin` does not match the stored admin.
     /// - [`ContractError::InvalidQuorum`] if `new_quorum` is zero or negative.
     /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
     /// - [`ContractError::ProposalNotActive`] if the proposal is not in `Active` status.
-    pub fn update_quorum(env: Env, admin: Address, proposal_id: u64, new_quorum: i128) -> Result<(), ContractError> {
+    pub fn update_quorum(
+        env: Env,
+        admin: Address,
+        proposal_id: u64,
+        new_quorum: i128,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
-        if get_admin(&env)? != admin { return Err(ContractError::NotAdmin); }
-        if new_quorum <= 0 { return Err(ContractError::InvalidQuorum); }
+        if get_admin(&env)? != admin {
+            return Err(ContractError::NotAdmin);
+        }
+        if new_quorum <= 0 {
+            return Err(ContractError::InvalidQuorum);
+        }
         let mut proposal = load_proposal(&env, proposal_id)?;
         if proposal.status != ProposalStatus::Active {
             return Err(ContractError::ProposalNotActive);
@@ -294,14 +283,7 @@ impl GovernanceContract {
         Ok(())
     }
 
-    /// Returns the full state of a proposal.
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `proposal_id` – ID of the proposal to retrieve.
-    ///
-    /// # Returns
-    /// A [`Proposal`] struct with all fields populated.
+    /// Returns the full state of a proposal by ID.
     ///
     /// # Errors
     /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
@@ -311,24 +293,15 @@ impl GovernanceContract {
 
     /// Returns the total number of proposals ever created.
     ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    ///
-    /// # Returns
-    /// Proposal count as `u64`. Returns `0` before any proposals are created.
+    /// Returns `0` before any proposals are created.
     pub fn proposal_count(env: Env) -> u64 {
-        env.storage().instance().get(&DataKey::ProposalCount).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::ProposalCount)
+            .unwrap_or(0)
     }
 
     /// Returns whether an address has already voted on a given proposal.
-    ///
-    /// # Parameters
-    /// - `env` – Soroban execution environment.
-    /// - `proposal_id` – ID of the proposal to check.
-    /// - `voter` – Address to check.
-    ///
-    /// # Returns
-    /// `true` if the address has cast a vote, `false` otherwise.
     pub fn has_voted(env: Env, proposal_id: u64, voter: Address) -> bool {
         has_voted(&env, proposal_id, &voter)
     }

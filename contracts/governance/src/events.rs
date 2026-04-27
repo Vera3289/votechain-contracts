@@ -33,6 +33,11 @@ pub fn proposal_finalised(env: &Env, id: u64, status: &ProposalStatus) {
     env.events().publish((symbol_short!("final"), id), status.clone());
 }
 
+/// Emits a `cancelled` event when a proposal is cancelled by admin.
+pub fn proposal_cancelled(env: &Env, id: u64) {
+    env.events().publish((symbol_short!("cancelled"), id), ());
+}
+
 /// Emits a `qupdate` event when a proposal's quorum is updated.
 ///
 /// # Parameters
