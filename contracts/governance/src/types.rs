@@ -33,6 +33,10 @@ pub enum ContractError {
     AlreadyInitialized = 13,
     /// 14 – Vote tally arithmetic overflow
     VoteTallyOverflow = 14,
+    /// 15 – Proposer token balance is below the minimum required to create a proposal
+    InsufficientBalance = 15,
+    /// 16 – Proposer is within the cooldown period between proposals
+    ProposalCooldown = 16,
 }
 
 #[contracttype]
