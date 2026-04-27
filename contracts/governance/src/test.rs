@@ -392,6 +392,27 @@ fn test_no_data_lost_between_calls() {
 
 // ── end storage persistence tests ─────────────────────────────────────────────
 
+// ── Issue #8: has_voted ProposalNotFound tests ────────────────────────────────
+
+#[test]
+#[should_panic]
+fn test_has_voted_invalid_proposal_id_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    t.client.has_voted(&999, &voter);
+}
+
+#[test]
+fn test_has_voted_returns_false_for_non_voter() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let non_voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &proposer);
+    assert!(!t.client.has_voted(&id, &non_voter));
+}
+
+// ── end Issue #8 ──────────────────────────────────────────────────────────────
+
 // ── Issue #28: comprehensive voting scenario tests ────────────────────────────
 
 #[test]
@@ -522,6 +543,7 @@ fn test_vote_after_end_time_reverts() {
 }
 
 #[test]
+#[should_panic]
 fn test_vote_at_exact_end_time_reverts() {
     let t = setup_env();
     let voter = Address::generate(&t.env);
@@ -534,10 +556,7 @@ fn test_vote_at_exact_end_time_reverts() {
         &3600,
     );
     t.env.ledger().with_mut(|l| l.timestamp = now + 3600);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
-    }));
-    assert!(result.is_err());
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
 }
 
 #[test]
