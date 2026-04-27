@@ -69,6 +69,7 @@ impl TokenContract {
         if b < amount { return Err(ContractError::InsufficientBalance); }
         set_balance(&env, &from, b - amount);
         set_balance(&env, &to, balance_of(&env, &to) + amount);
+        events::transferred(&env, &from, &to, amount);
         Ok(())
     }
 
@@ -129,6 +130,7 @@ impl TokenContract {
         if amount <= 0 { return Err(ContractError::InvalidAmount); }
         set_balance(&env, &to, balance_of(&env, &to) + amount);
         set_total_supply(&env, total_supply(&env) + amount);
+        events::minted(&env, &to, amount);
         Ok(())
     }
 
@@ -152,6 +154,7 @@ impl TokenContract {
         if b < amount { return Err(ContractError::InsufficientBalance); }
         set_balance(&env, &from, b - amount);
         set_total_supply(&env, total_supply(&env) - amount);
+        events::burned(&env, &from, amount);
         Ok(())
     }
 

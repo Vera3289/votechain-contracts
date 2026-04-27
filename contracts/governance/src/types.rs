@@ -33,11 +33,15 @@ pub enum ContractError {
     AlreadyInitialized = 13,
     /// 14 – Vote tally arithmetic overflow
     VoteTallyOverflow = 14,
+    /// 15 – Proposer has insufficient token balance to create a proposal
+    InsufficientBalance = 15,
+    /// 16 – Proposer must wait for the cooldown period to expire
+    ProposalCooldown = 16,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
-pub enum ProposalStatus {
+pub enum ProposalState {
     Active,
     Passed,
     Rejected,
@@ -66,7 +70,7 @@ pub struct Proposal {
     pub quorum: i128,       // minimum total votes required to pass
     pub start_time: u64,
     pub end_time: u64,
-    pub status: ProposalStatus,
+    pub status: ProposalState,
 }
 
 #[contracttype]
