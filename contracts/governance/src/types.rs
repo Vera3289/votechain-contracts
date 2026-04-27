@@ -41,7 +41,7 @@ pub enum ContractError {
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
-pub enum ProposalStatus {
+pub enum ProposalState {
     Active,
     Passed,
     Rejected,
@@ -70,7 +70,7 @@ pub struct Proposal {
     pub quorum: i128,       // minimum total votes required to pass
     pub start_time: u64,
     pub end_time: u64,
-    pub status: ProposalStatus,
+    pub status: ProposalState,
 }
 
 #[contracttype]

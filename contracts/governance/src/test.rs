@@ -59,7 +59,7 @@ fn test_create_proposal() {
     let id = create_test_proposal(&t, &proposer);
     assert_eq!(id, 1);
     assert_eq!(t.client.proposal_count(), 1);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Active);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Active);
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn test_cast_vote_and_finalise_passed() {
 
     t.env.ledger().with_mut(|l| l.timestamp += 3601);
     t.client.finalise(&id);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Passed);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Passed);
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn test_finalise_rejected_below_quorum() {
     mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
     t.env.ledger().with_mut(|l| l.timestamp += 3601);
     t.client.finalise(&id);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Rejected);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Rejected);
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn test_finalise_rejected_no_wins() {
     mint_and_vote(&t, &voter, id, Vote::No, 1_000_000);
     t.env.ledger().with_mut(|l| l.timestamp += 3601);
     t.client.finalise(&id);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Rejected);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Rejected);
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn test_execute_passed_proposal() {
     t.env.ledger().with_mut(|l| l.timestamp += 3601);
     t.client.finalise(&id);
     t.client.execute(&t.admin, &id);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Executed);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Executed);
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn test_cancel_proposal() {
     let proposer = Address::generate(&t.env);
     let id = create_test_proposal(&t, &proposer);
     t.client.cancel(&t.admin, &id);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Cancelled);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Cancelled);
 }
 
 // ── TEST-009: concurrent proposal scenario tests ──────────────────────────────
@@ -175,8 +175,8 @@ fn test_finalise_one_does_not_affect_others() {
     t.env.ledger().with_mut(|l| l.timestamp += 3601);
     t.client.finalise(&id1);
 
-    assert_ne!(t.client.get_proposal(&id1).status, ProposalStatus::Active);
-    assert_eq!(t.client.get_proposal(&id2).status, ProposalStatus::Active);
+    assert_ne!(t.client.get_proposal(&id1).status, ProposalState::Active);
+    assert_eq!(t.client.get_proposal(&id2).status, ProposalState::Active);
 }
 
 #[test]
@@ -207,10 +207,10 @@ fn test_proposals_at_different_lifecycle_stages() {
     t.client.finalise(&passed_id);
     t.client.finalise(&rejected_id);
 
-    assert_eq!(t.client.get_proposal(&active_id).status,    ProposalStatus::Active);
-    assert_eq!(t.client.get_proposal(&passed_id).status,    ProposalStatus::Passed);
-    assert_eq!(t.client.get_proposal(&rejected_id).status,  ProposalStatus::Rejected);
-    assert_eq!(t.client.get_proposal(&cancelled_id).status, ProposalStatus::Cancelled);
+    assert_eq!(t.client.get_proposal(&active_id).status,    ProposalState::Active);
+    assert_eq!(t.client.get_proposal(&passed_id).status,    ProposalState::Passed);
+    assert_eq!(t.client.get_proposal(&rejected_id).status,  ProposalState::Rejected);
+    assert_eq!(t.client.get_proposal(&cancelled_id).status, ProposalState::Cancelled);
 }
 
 // ── end TEST-009 ──────────────────────────────────────────────────────────────
@@ -334,7 +334,7 @@ fn test_proposal_data_persists_unchanged() {
     assert_eq!(p.title, String::from_str(&t.env, "Persist title"));
     assert_eq!(p.description, String::from_str(&t.env, "Persist desc"));
     assert_eq!(p.quorum, 250);
-    assert_eq!(p.status, ProposalStatus::Active);
+    assert_eq!(p.status, ProposalState::Active);
     assert_eq!(p.proposer, proposer);
 }
 
@@ -364,7 +364,7 @@ fn test_admin_persists_after_initialization() {
     let t = setup_env();
     let id = create_test_proposal(&t, &t.admin.clone());
     t.client.cancel(&t.admin, &id);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalStatus::Cancelled);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Cancelled);
 }
 
 #[test]
@@ -386,7 +386,7 @@ fn test_no_data_lost_between_calls() {
     assert_eq!(p2.title, String::from_str(&t.env, "P2"));
     assert_eq!(p2.quorum, 200);
     assert_eq!(p2.votes_yes, 0);
-    assert_eq!(p2.status, ProposalStatus::Active);
+    assert_eq!(p2.status, ProposalState::Active);
     assert!(!t.client.has_voted(&id2, &voter));
 }
 
@@ -412,6 +412,40 @@ fn test_has_voted_returns_false_for_non_voter() {
 }
 
 // ── end Issue #8 ──────────────────────────────────────────────────────────────
+
+// ── Issue #10: ProposalState enum tests ──────────────────────────────────────
+
+#[test]
+fn test_proposal_state_all_variants_reachable() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+
+    // Active
+    let id = create_test_proposal(&t, &voter);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Active);
+
+    // Cancelled
+    let id2 = create_test_proposal(&t, &voter);
+    t.client.cancel(&t.admin, &id2);
+    assert_eq!(t.client.get_proposal(&id2).status, ProposalState::Cancelled);
+
+    // Rejected
+    let id3 = create_test_proposal(&t, &voter);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id3);
+    assert_eq!(t.client.get_proposal(&id3).status, ProposalState::Rejected);
+
+    // Passed + Executed
+    let id4 = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id4, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id4);
+    assert_eq!(t.client.get_proposal(&id4).status, ProposalState::Passed);
+    t.client.execute(&t.admin, &id4);
+    assert_eq!(t.client.get_proposal(&id4).status, ProposalState::Executed);
+}
+
+// ── end Issue #10 ─────────────────────────────────────────────────────────────
 
 // ── Issue #28: comprehensive voting scenario tests ────────────────────────────
 
@@ -685,7 +719,7 @@ fn test_create_proposal_at_min_balance_accepted() {
         &100,
         &3600,
     );
-    assert_eq!(client.get_proposal(&id).status, ProposalStatus::Active);
+    assert_eq!(client.get_proposal(&id).status, ProposalState::Active);
 }
 
 #[test]
@@ -743,7 +777,7 @@ fn test_create_proposal_after_cooldown_accepted() {
         &100,
         &3600,
     );
-    assert_eq!(client.get_proposal(&id2).status, ProposalStatus::Active);
+    assert_eq!(client.get_proposal(&id2).status, ProposalState::Active);
 }
 
 // ── end spam prevention tests ─────────────────────────────────────────────────
