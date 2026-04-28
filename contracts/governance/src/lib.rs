@@ -62,6 +62,8 @@ impl GovernanceContract {
     /// # Errors
     /// - [`ContractError::InvalidQuorum`] if `quorum` is zero or negative.
     /// - [`ContractError::InvalidDuration`] if `duration` is zero.
+    /// - [`ContractError::InsufficientBalance`] if proposer balance is below minimum.
+    /// - [`ContractError::ProposalCooldown`] if proposer is within cooldown period.
     pub fn create_proposal(
         env: Env,
         proposer: Address,
