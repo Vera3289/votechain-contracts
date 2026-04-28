@@ -51,6 +51,16 @@ impl TokenContract {
     /// Balance as `i128`. Returns `0` if the address has never held tokens.
     pub fn balance(env: Env, owner: Address) -> i128 { balance_of(&env, &owner) }
 
+    /// Returns the token balance of an address (alias for [`balance`]).
+    ///
+    /// # Parameters
+    /// - `env` – Soroban execution environment.
+    /// - `owner` – Address to query.
+    ///
+    /// # Returns
+    /// Balance as `i128`. Returns `0` if the address has never held tokens.
+    pub fn balance_of(env: Env, owner: Address) -> i128 { balance_of(&env, &owner) }
+
     /// Transfers tokens from one address to another.
     ///
     /// # Parameters
