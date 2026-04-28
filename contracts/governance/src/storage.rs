@@ -1,5 +1,5 @@
 use soroban_sdk::{Env, Address};
-use crate::types::{ContractError, DataKey, Proposal};
+use crate::types::{ContractError, DataKey, Proposal, VoteRecord};
 
 /// Persists a proposal to contract storage, keyed by its ID.
 pub fn save_proposal(env: &Env, p: &Proposal) {
@@ -72,6 +72,16 @@ pub fn has_voted(env: &Env, proposal_id: u64, voter: &Address) -> bool {
         .persistent()
         .get(&DataKey::HasVoted(proposal_id, voter.clone()))
         .unwrap_or(false)
+}
+
+/// Stores the vote record for `voter` on `proposal_id`.
+pub fn save_vote_record(env: &Env, proposal_id: u64, voter: &Address, record: &VoteRecord) {
+    env.storage().persistent().set(&DataKey::VoteRecord(proposal_id, voter.clone()), record);
+}
+
+/// Returns the vote record for `voter` on `proposal_id`, or `None` if not voted.
+pub fn get_vote_record(env: &Env, proposal_id: u64, voter: &Address) -> Option<VoteRecord> {
+    env.storage().persistent().get(&DataKey::VoteRecord(proposal_id, voter.clone()))
 }
 
 pub fn set_min_proposal_balance(env: &Env, v: i128) {

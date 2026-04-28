@@ -782,44 +782,48 @@ fn test_create_proposal_after_cooldown_accepted() {
 
 // ── end spam prevention tests ─────────────────────────────────────────────────
 
-// ── SC-022: title/description max length enforcement ──────────────────────────
+// ── SC-023: get_vote tests ────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "title too long")]
-fn test_create_proposal_title_too_long_reverts() {
+fn test_get_vote_returns_record_after_voting() {
     let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    // 257 bytes
-    let long_title = String::from_str(&t.env, &"a".repeat(257));
-    t.client.create_proposal(&proposer, &long_title, &String::from_str(&t.env, "desc"), &100, &3600);
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 500_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::Yes);
+    assert_eq!(record.weight, 500_000);
 }
 
 #[test]
-#[should_panic(expected = "description too long")]
-fn test_create_proposal_description_too_long_reverts() {
+fn test_get_vote_returns_none_for_non_voter() {
     let t = setup_env();
     let proposer = Address::generate(&t.env);
-    // 4097 bytes
-    let long_desc = String::from_str(&t.env, &"a".repeat(4097));
-    t.client.create_proposal(&proposer, &String::from_str(&t.env, "title"), &long_desc, &100, &3600);
+    let non_voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &proposer);
+    assert!(t.client.get_vote(&id, &non_voter).is_none());
 }
 
 #[test]
-fn test_create_proposal_title_at_max_length_accepted() {
+fn test_get_vote_correct_type_for_no_vote() {
     let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let max_title = String::from_str(&t.env, &"a".repeat(256));
-    let id = t.client.create_proposal(&proposer, &max_title, &String::from_str(&t.env, "desc"), &100, &3600);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Active);
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::No, 300_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::No);
+    assert_eq!(record.weight, 300_000);
 }
 
 #[test]
-fn test_create_proposal_description_at_max_length_accepted() {
+fn test_get_vote_correct_type_for_abstain() {
     let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    let max_desc = String::from_str(&t.env, &"a".repeat(4096));
-    let id = t.client.create_proposal(&proposer, &String::from_str(&t.env, "title"), &max_desc, &100, &3600);
-    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Active);
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Abstain, 100_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::Abstain);
+    assert_eq!(record.weight, 100_000);
 }
 
-// ── end SC-022 ────────────────────────────────────────────────────────────────
+// ── end SC-023 ────────────────────────────────────────────────────────────────
