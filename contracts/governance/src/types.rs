@@ -37,6 +37,10 @@ pub enum ContractError {
     InsufficientBalance = 15,
     /// 16 – Proposer must wait for the cooldown period to expire
     ProposalCooldown = 16,
+    /// 17 – Proposal title exceeds maximum byte length
+    TitleTooLong = 17,
+    /// 18 – Proposal description exceeds maximum byte length
+    DescriptionTooLong = 18,
 }
 
 #[contracttype]
@@ -78,10 +82,19 @@ pub enum DataKey {
     Proposal(u64),
     ProposalCount,
     HasVoted(u64, Address),      // (proposal_id, voter)
+    VoteRecord(u64, Address),    // (proposal_id, voter)
     Admin,
     VotingToken,
     MinProposalBalance,          // i128: minimum token balance to create a proposal
     ProposalCooldown,            // u64:  seconds between proposals per address
     LastProposal(Address),       // u64:  timestamp of proposer's last proposal
     Version,
+    VoterSnapshot(u64, Address), // (proposal_id, voter) -> i128: balance snapshot at vote time
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VoteRecord {
+    pub vote_type: Vote,
+    pub weight: i128,
 }

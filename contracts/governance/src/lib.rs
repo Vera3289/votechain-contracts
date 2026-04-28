@@ -16,9 +16,12 @@ use storage::{
     get_admin, get_last_proposal, get_min_proposal_balance, get_proposal_cooldown,
     get_version, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
     next_id, save_proposal, set_admin, set_last_proposal, set_min_proposal_balance,
-    set_proposal_cooldown, set_version, set_voting_token,
+    set_proposal_cooldown, set_version, set_voting_token, save_vote_record, get_vote_record,
 };
-use types::{ContractError, DataKey, Proposal, ProposalState, Vote};
+use types::{ContractError, DataKey, Proposal, ProposalState, Vote, VoteRecord};
+
+const MAX_TITLE_LEN: u32 = 256;
+const MAX_DESC_LEN: u32 = 4096;
 
 #[contract]
 pub struct GovernanceContract;
@@ -78,6 +81,12 @@ impl GovernanceContract {
         }
         if duration == 0 {
             return Err(ContractError::InvalidDuration);
+        }
+        if title.len() > MAX_TITLE_LEN {
+            return Err(ContractError::TitleTooLong);
+        }
+        if description.len() > MAX_DESC_LEN {
+            return Err(ContractError::DescriptionTooLong);
         }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
@@ -151,7 +160,17 @@ impl GovernanceContract {
         }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
-        let weight = token_client.balance(&voter);
+        // Snapshot: capture the voter's balance at vote time and persist it.
+        // Using the stored snapshot (rather than re-querying) prevents any
+        // balance manipulation after the vote is recorded.
+        let weight = match get_voter_snapshot(&env, proposal_id, &voter) {
+            Some(w) => w,
+            None => {
+                let live = token_client.balance(&voter);
+                save_voter_snapshot(&env, proposal_id, &voter, live);
+                live
+            }
+        };
         if weight <= 0 {
             return Err(ContractError::NoVotingPower);
         }
@@ -179,12 +198,18 @@ impl GovernanceContract {
         }
 
         mark_voted(&env, proposal_id, &voter);
+        save_vote_record(&env, proposal_id, &voter, &VoteRecord { vote_type: vote.clone(), weight });
         save_proposal(&env, &proposal);
         events::vote_cast(&env, proposal_id, &voter, &vote, weight);
         Ok(())
     }
 
-    /// Finalises a proposal after its voting period has ended.
+    /// Returns the vote record (type and weight) for a specific voter on a proposal.
+    ///
+    /// Returns `None` for non-voters without reverting. Read-only.
+    pub fn get_vote(env: Env, proposal_id: u64, voter: Address) -> Option<VoteRecord> {
+        get_vote_record(&env, proposal_id, &voter)
+    }
     ///
     /// # Errors
     /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
