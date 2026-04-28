@@ -781,3 +781,49 @@ fn test_create_proposal_after_cooldown_accepted() {
 }
 
 // ── end spam prevention tests ─────────────────────────────────────────────────
+
+// ── SC-023: get_vote tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_get_vote_returns_record_after_voting() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 500_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::Yes);
+    assert_eq!(record.weight, 500_000);
+}
+
+#[test]
+fn test_get_vote_returns_none_for_non_voter() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    let non_voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &proposer);
+    assert!(t.client.get_vote(&id, &non_voter).is_none());
+}
+
+#[test]
+fn test_get_vote_correct_type_for_no_vote() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::No, 300_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::No);
+    assert_eq!(record.weight, 300_000);
+}
+
+#[test]
+fn test_get_vote_correct_type_for_abstain() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Abstain, 100_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::Abstain);
+    assert_eq!(record.weight, 100_000);
+}
+
+// ── end SC-023 ────────────────────────────────────────────────────────────────
