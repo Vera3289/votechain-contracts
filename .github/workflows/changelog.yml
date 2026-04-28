@@ -1,0 +1,124 @@
+name: Update Changelog
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  changelog:
+    name: Append changelog entry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Build and insert changelog entry
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          DATE=$(date -u +%Y-%m-%d)
+
+          PREV_TAG=$(git tag --list 'v*.*.*' --sort=-version:refname \
+            | grep -v "^${TAG}$" | head -n1)
+
+          if [ -z "$PREV_TAG" ]; then
+            COMMIT_LOG=$(git log --pretty=format:"%s")
+          else
+            COMMIT_LOG=$(git log --pretty=format:"%s" "${PREV_TAG}..HEAD")
+          fi
+
+          cat > /tmp/update_changelog.py << 'EOF'
+import re
+import os
+import sys
+
+version = os.environ["CL_VERSION"]
+date    = os.environ["CL_DATE"]
+raw     = os.environ.get("CL_COMMITS", "")
+
+commits = [
+    c.strip() for c in raw.strip().splitlines()
+    if c.strip() and not c.strip().startswith("Merge ")
+]
+
+sections = {
+    "Added":    [],
+    "Changed":  [],
+    "Removed":  [],
+    "Fixed":    [],
+    "Security": [],
+}
+
+for c in commits:
+    if re.match(r'^feat(\(.+\))?!?:', c):
+        sections["Added"].append(re.sub(r'^feat(\(.+\))?!?:\s*', '', c))
+    elif re.match(r'^fix(\(.+\))?!?:', c):
+        sections["Fixed"].append(re.sub(r'^fix(\(.+\))?!?:\s*', '', c))
+    elif re.match(r'^(refactor|chore|perf|build|ci)(\(.+\))?!?:', c):
+        sections["Changed"].append(re.sub(r'^[^:]+:\s*', '', c))
+    elif re.match(r'^(remove|revert)(\(.+\))?!?:', c):
+        sections["Removed"].append(re.sub(r'^[^:]+:\s*', '', c))
+    elif re.match(r'^security(\(.+\))?!?:', c):
+        sections["Security"].append(re.sub(r'^[^:]+:\s*', '', c))
+
+lines = [f"\n## [{version}] - {date}"]
+for name, items in sections.items():
+    if items:
+        lines.append(f"\n### {name}")
+        lines.extend(f"- {i}" for i in items)
+entry = "\n".join(lines) + "\n"
+
+with open("CHANGELOG.md") as f:
+    content = f.read()
+
+marker = "## [Unreleased]"
+idx = content.find(marker)
+if idx == -1:
+    sys.exit("ERROR: [Unreleased] section not found in CHANGELOG.md")
+
+ins = content.find("\n## [", idx + len(marker))
+if ins == -1:
+    content = content.rstrip() + "\n" + entry
+else:
+    content = content[:ins] + entry + content[ins:]
+
+# Update the comparison link for [Unreleased] and add the new release link
+repo = "https://github.com/Vera3289/votechain-contracts"
+prev_ver = os.environ.get("CL_PREV_TAG", "").lstrip("v")
+unreleased_link = f"[Unreleased]: {repo}/compare/v{version}...HEAD"
+
+existing_link = re.search(r'^\[Unreleased\]:.*$', content, re.MULTILINE)
+if existing_link:
+    content = content.replace(existing_link.group(0), unreleased_link)
+else:
+    content = content.rstrip() + f"\n{unreleased_link}\n"
+
+release_link = f"[{version}]: {repo}/releases/tag/v{version}"
+if release_link not in content:
+    content = content.rstrip() + f"\n{release_link}\n"
+
+with open("CHANGELOG.md", "w") as f:
+    f.write(content)
+
+print(f"Changelog updated for v{version}")
+EOF
+
+          CL_VERSION="$VERSION" \
+          CL_DATE="$DATE" \
+          CL_COMMITS="$COMMIT_LOG" \
+          CL_PREV_TAG="$PREV_TAG" \
+          python3 /tmp/update_changelog.py
+
+      - name: Commit updated CHANGELOG.md
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --staged --quiet \
+            || git commit -m "chore: update CHANGELOG for ${TAG} [skip ci]"
+          git push origin main
