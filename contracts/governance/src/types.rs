@@ -37,6 +37,14 @@ pub enum ContractError {
     InsufficientBalance = 15,
     /// 16 – Proposer must wait for the cooldown period to expire
     ProposalCooldown = 16,
+    /// 17 – Title is empty or exceeds the maximum allowed length
+    InvalidTitle = 17,
+    /// 18 – Description is empty or exceeds the maximum allowed length
+    InvalidDescription = 18,
+    /// 19 – Quorum exceeds the total token supply
+    QuorumExceedsSupply = 19,
+    /// 20 – Duration is below the minimum or above the maximum allowed value
+    InvalidDurationRange = 20,
 }
 
 #[contracttype]

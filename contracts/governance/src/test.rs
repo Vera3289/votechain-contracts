@@ -10,7 +10,7 @@ use crate::test_helpers::{setup_env, create_test_proposal, mint_and_vote};
 fn setup_token(env: &Env, admin: &Address) -> Address {
     let id = env.register(votechain_token::TokenContract, ());
     let t = votechain_token::TokenContractClient::new(env, &id);
-    t.initialize(admin, &1_000_000);
+    t.initialize(admin, &10_000_000);
     id
 }
 
@@ -781,3 +781,93 @@ fn test_create_proposal_after_cooldown_accepted() {
 }
 
 // ── end spam prevention tests ─────────────────────────────────────────────────
+
+// ── SC-002: create_proposal parameter validation tests ────────────────────────
+
+#[test]
+#[should_panic]
+fn test_create_proposal_empty_title_reverts() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, ""),
+        &String::from_str(&t.env, "desc"),
+        &100,
+        &3600,
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_empty_description_reverts() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, "Title"),
+        &String::from_str(&t.env, ""),
+        &100,
+        &3600,
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_quorum_exceeds_supply_reverts() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    // supply is 10_000_000; quorum of 10_000_001 should fail
+    t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, "Title"),
+        &String::from_str(&t.env, "desc"),
+        &10_000_001,
+        &3600,
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_duration_below_min_reverts() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, "Title"),
+        &String::from_str(&t.env, "desc"),
+        &100,
+        &59, // below MIN_DURATION of 60
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_duration_above_max_reverts() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, "Title"),
+        &String::from_str(&t.env, "desc"),
+        &100,
+        &2_592_001, // above MAX_DURATION of 2_592_000
+    );
+}
+
+#[test]
+fn test_create_proposal_quorum_equals_supply_accepted() {
+    let t = setup_env();
+    let proposer = Address::generate(&t.env);
+    // quorum == supply is valid
+    let id = t.client.create_proposal(
+        &proposer,
+        &String::from_str(&t.env, "Title"),
+        &String::from_str(&t.env, "desc"),
+        &10_000_000,
+        &3600,
+    );
+    assert_eq!(t.client.get_proposal(&id).state, ProposalState::Active);
+}
+
+// ── end SC-002 ────────────────────────────────────────────────────────────────
