@@ -25,7 +25,7 @@ pub fn setup_env() -> TestEnv {
 
     let tok_id = env.register(votechain_token::TokenContract, ());
     let tok = votechain_token::TokenContractClient::new(&env, &tok_id);
-    tok.initialize(&admin, &1_000_000);
+    tok.initialize(&admin, &10_000_000);
 
     client.initialize(&admin, &tok_id, &0_i128, &0_u64);
 

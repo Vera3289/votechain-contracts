@@ -10,7 +10,7 @@ use crate::test_helpers::{setup_env, create_test_proposal, mint_and_vote};
 fn setup_token(env: &Env, admin: &Address) -> Address {
     let id = env.register(votechain_token::TokenContract, ());
     let t = votechain_token::TokenContractClient::new(env, &id);
-    t.initialize(admin, &1_000_000);
+    t.initialize(admin, &10_000_000);
     id
 }
 

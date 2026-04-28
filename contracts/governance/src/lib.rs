@@ -11,7 +11,7 @@ pub mod test_helpers;
 #[cfg(test)]
 mod prop_tests;
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
+use soroban_sdk::{contract, contractclient, contractimpl, token, Address, Env, String};
 use storage::{
     get_admin, get_last_proposal, get_min_proposal_balance, get_proposal_cooldown,
     get_version, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
@@ -22,6 +22,17 @@ use types::{ContractError, DataKey, Proposal, ProposalState, Vote, VoteRecord};
 
 const MAX_TITLE_LEN: u32 = 256;
 const MAX_DESC_LEN: u32 = 4096;
+
+const MAX_TITLE_LEN: u32 = 128;
+const MAX_DESC_LEN: u32 = 1024;
+const MIN_DURATION: u64 = 60;        // 1 minute
+const MAX_DURATION: u64 = 2_592_000; // 30 days
+
+/// Minimal client for querying the governance token's total supply.
+#[contractclient(name = "TokenSupplyClient")]
+pub trait TokenSupplyInterface {
+    fn total_supply(env: Env) -> i128;
+}
 
 #[contract]
 pub struct GovernanceContract;
@@ -63,8 +74,11 @@ impl GovernanceContract {
     /// The numeric ID assigned to the new proposal.
     ///
     /// # Errors
+    /// - [`ContractError::InvalidTitle`] if `title` is empty or exceeds 128 characters.
+    /// - [`ContractError::InvalidDescription`] if `description` is empty or exceeds 1024 characters.
     /// - [`ContractError::InvalidQuorum`] if `quorum` is zero or negative.
-    /// - [`ContractError::InvalidDuration`] if `duration` is zero.
+    /// - [`ContractError::QuorumExceedsSupply`] if `quorum` exceeds the total token supply.
+    /// - [`ContractError::InvalidDurationRange`] if `duration` is outside [60, 2_592_000] seconds.
     /// - [`ContractError::InsufficientBalance`] if proposer balance is below minimum.
     /// - [`ContractError::ProposalCooldown`] if proposer is within cooldown period.
     pub fn create_proposal(
@@ -76,11 +90,24 @@ impl GovernanceContract {
         duration: u64,
     ) -> Result<u64, ContractError> {
         proposer.require_auth();
+
+        // Title: non-empty, max 128 chars
+        let title_len = title.len();
+        if title_len == 0 || title_len > MAX_TITLE_LEN {
+            return Err(ContractError::InvalidTitle);
+        }
+        // Description: non-empty, max 1024 chars
+        let desc_len = description.len();
+        if desc_len == 0 || desc_len > MAX_DESC_LEN {
+            return Err(ContractError::InvalidDescription);
+        }
+        // Quorum: > 0
         if quorum <= 0 {
             return Err(ContractError::InvalidQuorum);
         }
-        if duration == 0 {
-            return Err(ContractError::InvalidDuration);
+        // Duration: within [MIN_DURATION, MAX_DURATION]
+        if duration < MIN_DURATION || duration > MAX_DURATION {
+            return Err(ContractError::InvalidDurationRange);
         }
         if title.len() > MAX_TITLE_LEN {
             return Err(ContractError::TitleTooLong);
@@ -90,6 +117,12 @@ impl GovernanceContract {
         }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
+
+        // Quorum must not exceed total token supply
+        let supply = TokenSupplyClient::new(&env, &get_voting_token(&env)?).total_supply();
+        if quorum > supply {
+            return Err(ContractError::QuorumExceedsSupply);
+        }
 
         let min_balance = get_min_proposal_balance(&env);
         if min_balance > 0 {
