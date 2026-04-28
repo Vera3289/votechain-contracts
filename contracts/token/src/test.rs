@@ -77,6 +77,19 @@ fn test_balance_of() {
 }
 
 #[test]
+fn test_balance_of_named_function() {
+    let (env, c) = setup();
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    c.initialize(&admin, &1_000);
+    assert_eq!(c.balance_of(&admin), 1_000);
+    assert_eq!(c.balance_of(&user), 0);
+    c.transfer(&admin, &user, &400);
+    assert_eq!(c.balance_of(&admin), 600);
+    assert_eq!(c.balance_of(&user), 400);
+}
+
+#[test]
 fn test_transfer_atomicity() {
     let (env, c) = setup();
     let admin = Address::generate(&env);
