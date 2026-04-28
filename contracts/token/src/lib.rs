@@ -75,6 +75,8 @@ impl TokenContract {
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), ContractError> {
         from.require_auth();
         if amount <= 0 { return Err(ContractError::InvalidAmount); }
+        // Transfer to self is a no-op: auth is still required but no state changes occur.
+        if from == to { return Ok(()); }
         let b = balance_of(&env, &from);
         if b < amount { return Err(ContractError::InsufficientBalance); }
         set_balance(&env, &from, b - amount);
@@ -118,6 +120,7 @@ impl TokenContract {
         set_allowance(&env, &from, &spender, allowed - amount);
         set_balance(&env, &from, b - amount);
         set_balance(&env, &to, balance_of(&env, &to) + amount);
+        events::transferred(&env, &from, &to, amount);
         Ok(())
     }
 

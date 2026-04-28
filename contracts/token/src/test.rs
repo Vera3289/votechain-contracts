@@ -153,3 +153,55 @@ fn test_events_burn() {
             && i128::try_from_val(&env, &data).ok() == Some(400_i128)
     }));
 }
+
+#[test]
+fn test_transfer_to_self_is_noop() {
+    let (env, c) = setup();
+    let admin = Address::generate(&env);
+    c.initialize(&admin, &1_000);
+    // Transfer to self should succeed without changing balances.
+    c.transfer(&admin, &admin, &400);
+    assert_eq!(c.balance(&admin), 1_000);
+    assert_eq!(c.total_supply(), 1_000);
+    // No transfer event should be emitted for a self-transfer.
+    let events = env.events().all();
+    assert!(!events.iter().any(|(_, topics, _)| {
+        topics == (symbol_short!("transfer"), admin.clone(), admin.clone()).into_val(&env)
+    }));
+}
+
+#[test]
+#[should_panic]
+fn test_transfer_zero_amount() {
+    let (env, c) = setup();
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    c.initialize(&admin, &1_000);
+    // Zero amount must be rejected.
+    c.transfer(&admin, &user, &0);
+}
+
+#[test]
+#[should_panic]
+fn test_transfer_negative_amount() {
+    let (env, c) = setup();
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    c.initialize(&admin, &1_000);
+    // Negative amount must be rejected.
+    c.transfer(&admin, &user, &-1);
+}
+
+#[test]
+fn test_transfer_event_emitted() {
+    let (env, c) = setup();
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    c.initialize(&admin, &1_000);
+    c.transfer(&admin, &user, &250);
+    let events = env.events().all();
+    assert!(events.iter().any(|(_, topics, data)| {
+        topics == (symbol_short!("transfer"), admin.clone(), user.clone()).into_val(&env)
+            && i128::try_from_val(&env, &data).ok() == Some(250_i128)
+    }));
+}

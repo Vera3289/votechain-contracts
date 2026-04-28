@@ -1,3 +1,28 @@
+//! Storage accessors for the governance contract.
+//!
+//! # Namespacing strategy
+//!
+//! All storage entries are keyed by variants of [`DataKey`].  Soroban
+//! serialises the enum variant discriminant into the XDR key before any
+//! payload, so every variant occupies a completely isolated key space.
+//! Adding a new data type requires only a new enum variant — there is no
+//! risk of collision with existing keys.
+//!
+//! Storage tiers in use:
+//! - **Instance** – singleton config values (`Admin`, `VotingToken`,
+//!   `ProposalCount`, `MinProposalBalance`, `ProposalCooldown`, `Version`).
+//!   Shares the contract instance TTL; cheap to access.
+//! - **Persistent** – proposal data and per-voter records (`Proposal`,
+//!   `HasVoted`, `VoteRecord`, `VoterSnapshot`, `LastProposal`).
+//!   Survives ledger expiry; must be bumped explicitly for long-lived entries.
+//!
+//! ## Key-space isolation between related variants
+//!
+//! Several variants share the same payload shape `(u64, Address)` but are
+//! distinct enum variants (`HasVoted`, `VoteRecord`, `VoterSnapshot`).
+//! Because the discriminant is part of the serialised key, these can never
+//! collide even when called with identical arguments.
+
 use soroban_sdk::{Env, Address};
 use crate::types::{ContractError, DataKey, Proposal, VoteRecord};
 

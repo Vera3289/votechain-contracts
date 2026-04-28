@@ -77,19 +77,75 @@ pub struct Proposal {
     pub state: ProposalState,
 }
 
+/// Storage key enum for the governance contract.
+///
+/// Every storage entry is keyed by a variant of this enum.  Because Soroban
+/// serialises the variant discriminant as part of the XDR key, each variant
+/// occupies a completely separate key space — two variants with the same
+/// payload can never collide.
+///
+/// ## Key-space map
+///
+/// | Variant                          | Storage tier | Description                                        |
+/// |----------------------------------|--------------|---------------------------------------------------|
+/// | `Proposal(u64)`                  | Persistent   | Full proposal struct, keyed by proposal ID         |
+/// | `ProposalCount`                  | Instance     | Monotonic counter used to assign proposal IDs      |
+/// | `HasVoted(u64, Address)`         | Persistent   | Boolean flag: has this voter voted on this proposal|
+/// | `VoteRecord(u64, Address)`       | Persistent   | Detailed vote record (type + weight) per voter     |
+/// | `VoterSnapshot(u64, Address)`    | Persistent   | Token-balance snapshot captured at vote time       |
+/// | `LastProposal(Address)`          | Persistent   | Timestamp of a proposer's most recent proposal     |
+/// | `Admin`                          | Instance     | Contract administrator address                     |
+/// | `VotingToken`                    | Instance     | Governance token contract address                  |
+/// | `MinProposalBalance`             | Instance     | Minimum token balance required to create a proposal|
+/// | `ProposalCooldown`               | Instance     | Seconds a proposer must wait between proposals     |
+/// | `Version`                        | Instance     | Semver tuple `(major, minor, patch)`               |
 #[contracttype]
 pub enum DataKey {
+    /// Full [`Proposal`] struct, keyed by proposal ID (persistent storage).
+    /// Key space: one entry per unique `u64` proposal ID.
     Proposal(u64),
+
+    /// Monotonic counter used to derive the next proposal ID (instance storage).
+    /// Key space: singleton — only one `ProposalCount` entry exists.
     ProposalCount,
-    HasVoted(u64, Address),      // (proposal_id, voter)
-    VoteRecord(u64, Address),    // (proposal_id, voter)
+
+    /// Boolean flag recording whether `voter` has voted on `proposal_id` (persistent storage).
+    /// Key space: one entry per `(proposal_id, voter)` pair.
+    /// Kept separate from `VoteRecord` so existence checks are cheap.
+    HasVoted(u64, Address),
+
+    /// Detailed vote record (vote type + weight) for `voter` on `proposal_id` (persistent storage).
+    /// Key space: one entry per `(proposal_id, voter)` pair.
+    VoteRecord(u64, Address),
+
+    /// Contract administrator address (instance storage).
+    /// Key space: singleton — only one `Admin` entry exists.
     Admin,
+
+    /// Address of the governance token contract (instance storage).
+    /// Key space: singleton — only one `VotingToken` entry exists.
     VotingToken,
-    MinProposalBalance,          // i128: minimum token balance to create a proposal
-    ProposalCooldown,            // u64:  seconds between proposals per address
-    LastProposal(Address),       // u64:  timestamp of proposer's last proposal
+
+    /// Minimum token balance a proposer must hold to create a proposal (instance storage).
+    /// Key space: singleton — only one `MinProposalBalance` entry exists.
+    MinProposalBalance,
+
+    /// Minimum seconds a proposer must wait between consecutive proposals (instance storage).
+    /// Key space: singleton — only one `ProposalCooldown` entry exists.
+    ProposalCooldown,
+
+    /// Timestamp (Unix seconds) of `proposer`'s most recent proposal (persistent storage).
+    /// Key space: one entry per unique proposer address.
+    LastProposal(Address),
+
+    /// Contract version stored as a `(major, minor, patch)` semver tuple (instance storage).
+    /// Key space: singleton — only one `Version` entry exists.
     Version,
-    VoterSnapshot(u64, Address), // (proposal_id, voter) -> i128: balance snapshot at vote time
+
+    /// Token-balance snapshot for `voter` on `proposal_id`, captured at vote time (persistent storage).
+    /// Key space: one entry per `(proposal_id, voter)` pair.
+    /// Kept separate from `VoteRecord` to allow independent querying of vote weight.
+    VoterSnapshot(u64, Address),
 }
 
 #[contracttype]
