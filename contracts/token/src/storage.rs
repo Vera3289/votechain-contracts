@@ -1,3 +1,21 @@
+//! Storage accessors for the token contract.
+//!
+//! # Namespacing strategy
+//!
+//! All storage entries are keyed by variants of [`TokenDataKey`].  Soroban
+//! serialises the enum variant discriminant into the XDR key before any
+//! payload, so every variant occupies a completely isolated key space.
+//! Adding a new data type requires only a new enum variant — there is no
+//! risk of collision with existing keys.
+//!
+//! Storage tiers in use:
+//! - **Instance** – singleton config values (`Admin`, `TotalSupply`, `Version`).
+//!   Shares the contract instance TTL; cheap to access.
+//! - **Persistent** – per-address data (`Balance`).
+//!   Survives ledger expiry; must be bumped explicitly for long-lived entries.
+//! - **Temporary** – short-lived allowances (`Allowance`).
+//!   Automatically expires; no manual TTL management required.
+
 use soroban_sdk::{Env, Address};
 use crate::types::{ContractError, TokenDataKey};
 
