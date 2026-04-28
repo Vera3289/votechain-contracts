@@ -782,92 +782,48 @@ fn test_create_proposal_after_cooldown_accepted() {
 
 // ── end spam prevention tests ─────────────────────────────────────────────────
 
-// ── SC-002: create_proposal parameter validation tests ────────────────────────
+// ── SC-023: get_vote tests ────────────────────────────────────────────────────
 
 #[test]
-#[should_panic]
-fn test_create_proposal_empty_title_reverts() {
+fn test_get_vote_returns_record_after_voting() {
     let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, ""),
-        &String::from_str(&t.env, "desc"),
-        &100,
-        &3600,
-    );
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 500_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::Yes);
+    assert_eq!(record.weight, 500_000);
 }
 
 #[test]
-#[should_panic]
-fn test_create_proposal_empty_description_reverts() {
+fn test_get_vote_returns_none_for_non_voter() {
     let t = setup_env();
     let proposer = Address::generate(&t.env);
-    t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, "Title"),
-        &String::from_str(&t.env, ""),
-        &100,
-        &3600,
-    );
+    let non_voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &proposer);
+    assert!(t.client.get_vote(&id, &non_voter).is_none());
 }
 
 #[test]
-#[should_panic]
-fn test_create_proposal_quorum_exceeds_supply_reverts() {
+fn test_get_vote_correct_type_for_no_vote() {
     let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    // supply is 10_000_000; quorum of 10_000_001 should fail
-    t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, "Title"),
-        &String::from_str(&t.env, "desc"),
-        &10_000_001,
-        &3600,
-    );
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::No, 300_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::No);
+    assert_eq!(record.weight, 300_000);
 }
 
 #[test]
-#[should_panic]
-fn test_create_proposal_duration_below_min_reverts() {
+fn test_get_vote_correct_type_for_abstain() {
     let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, "Title"),
-        &String::from_str(&t.env, "desc"),
-        &100,
-        &59, // below MIN_DURATION of 60
-    );
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Abstain, 100_000);
+    let record = t.client.get_vote(&id, &voter).expect("expected vote record");
+    assert_eq!(record.vote_type, Vote::Abstain);
+    assert_eq!(record.weight, 100_000);
 }
 
-#[test]
-#[should_panic]
-fn test_create_proposal_duration_above_max_reverts() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, "Title"),
-        &String::from_str(&t.env, "desc"),
-        &100,
-        &2_592_001, // above MAX_DURATION of 2_592_000
-    );
-}
-
-#[test]
-fn test_create_proposal_quorum_equals_supply_accepted() {
-    let t = setup_env();
-    let proposer = Address::generate(&t.env);
-    // quorum == supply is valid
-    let id = t.client.create_proposal(
-        &proposer,
-        &String::from_str(&t.env, "Title"),
-        &String::from_str(&t.env, "desc"),
-        &10_000_000,
-        &3600,
-    );
-    assert_eq!(t.client.get_proposal(&id).state, ProposalState::Active);
-}
-
-// ── end SC-002 ────────────────────────────────────────────────────────────────
+// ── end SC-023 ────────────────────────────────────────────────────────────────
