@@ -160,7 +160,17 @@ impl GovernanceContract {
         }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
-        let weight = token_client.balance(&voter);
+        // Snapshot: capture the voter's balance at vote time and persist it.
+        // Using the stored snapshot (rather than re-querying) prevents any
+        // balance manipulation after the vote is recorded.
+        let weight = match get_voter_snapshot(&env, proposal_id, &voter) {
+            Some(w) => w,
+            None => {
+                let live = token_client.balance(&voter);
+                save_voter_snapshot(&env, proposal_id, &voter, live);
+                live
+            }
+        };
         if weight <= 0 {
             return Err(ContractError::NoVotingPower);
         }

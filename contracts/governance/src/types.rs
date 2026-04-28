@@ -89,6 +89,7 @@ pub enum DataKey {
     ProposalCooldown,            // u64:  seconds between proposals per address
     LastProposal(Address),       // u64:  timestamp of proposer's last proposal
     Version,
+    VoterSnapshot(u64, Address), // (proposal_id, voter) -> i128: balance snapshot at vote time
 }
 
 #[contracttype]
