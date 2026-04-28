@@ -781,3 +781,71 @@ fn test_create_proposal_after_cooldown_accepted() {
 }
 
 // ── end spam prevention tests ─────────────────────────────────────────────────
+
+// ── SC-004: finalise tests ────────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "voting still open")]
+fn test_finalise_before_period_ends_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    // voting period has not ended — should panic
+    t.client.finalise(&id);
+}
+
+#[test]
+#[should_panic(expected = "not active")]
+fn test_finalise_already_finalised_reverts() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    // second call — should panic with ProposalNotActive
+    t.client.finalise(&id);
+}
+
+#[test]
+fn test_finalise_passed_conditions() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    // quorum = 100, votes_yes = 1_000_000 > votes_no = 0
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Passed);
+}
+
+#[test]
+fn test_finalise_rejected_when_no_wins() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+    mint_and_vote(&t, &voter, id, Vote::No, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Rejected);
+}
+
+#[test]
+fn test_finalise_rejected_when_below_quorum() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    // quorum = 9_999_999, total votes = 1_000_000 < quorum
+    let id = t.client.create_proposal(
+        &voter,
+        &String::from_str(&t.env, "Low votes"),
+        &String::from_str(&t.env, "desc"),
+        &9_999_999,
+        &3600,
+    );
+    mint_and_vote(&t, &voter, id, Vote::Yes, 1_000_000);
+    t.env.ledger().with_mut(|l| l.timestamp += 3601);
+    t.client.finalise(&id);
+    assert_eq!(t.client.get_proposal(&id).status, ProposalState::Rejected);
+}
+
+// ── end SC-004 ────────────────────────────────────────────────────────────────
