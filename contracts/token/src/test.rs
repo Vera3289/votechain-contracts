@@ -1,6 +1,6 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{symbol_short, testutils::{Address as _, Events}, Address, Env, IntoVal};
+use soroban_sdk::{symbol_short, testutils::{Address as _, Events}, Address, Env, IntoVal, TryFromVal};
 
 fn setup() -> (Env, TokenContractClient<'static>) {
     let env = Env::default();
@@ -110,7 +110,7 @@ fn test_events_mint() {
     let events = env.events().all();
     assert!(events.iter().any(|(_, topics, data)| {
         topics == (symbol_short!("mint"), user.clone()).into_val(&env)
-            && data == 300_i128.into_val(&env)
+            && i128::try_from_val(&env, &data).ok() == Some(300_i128)
     }));
 }
 
@@ -124,7 +124,7 @@ fn test_events_transfer() {
     let events = env.events().all();
     assert!(events.iter().any(|(_, topics, data)| {
         topics == (symbol_short!("transfer"), admin.clone(), user.clone()).into_val(&env)
-            && data == 200_i128.into_val(&env)
+            && i128::try_from_val(&env, &data).ok() == Some(200_i128)
     }));
 }
 
@@ -137,6 +137,6 @@ fn test_events_burn() {
     let events = env.events().all();
     assert!(events.iter().any(|(_, topics, data)| {
         topics == (symbol_short!("burn"), admin.clone()).into_val(&env)
-            && data == 400_i128.into_val(&env)
+            && i128::try_from_val(&env, &data).ok() == Some(400_i128)
     }));
 }

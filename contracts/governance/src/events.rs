@@ -1,5 +1,5 @@
 use soroban_sdk::{Env, Address, symbol_short};
-use crate::types::{ProposalStatus, Vote};
+use crate::types::{ProposalState, Vote};
 
 /// Emits a `created` event when a new proposal is created.
 ///
@@ -28,8 +28,8 @@ pub fn vote_cast(env: &Env, id: u64, voter: &Address, vote: &Vote, weight: i128)
 /// # Parameters
 /// - `env` – Soroban execution environment.
 /// - `id` – ID of the proposal.
-/// - `status` – The new [`ProposalStatus`] after the state transition.
-pub fn proposal_finalised(env: &Env, id: u64, status: &ProposalStatus) {
+/// - `status` – The new [`ProposalState`] after the state transition.
+pub fn proposal_finalised(env: &Env, id: u64, status: &ProposalState) {
     env.events().publish((symbol_short!("final"), id), status.clone());
 }
 
