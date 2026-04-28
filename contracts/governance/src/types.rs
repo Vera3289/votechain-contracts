@@ -74,7 +74,7 @@ pub struct Proposal {
     pub quorum: i128,       // minimum total votes required to pass
     pub start_time: u64,
     pub end_time: u64,
-    pub status: ProposalState,
+    pub state: ProposalState,
 }
 
 #[contracttype]

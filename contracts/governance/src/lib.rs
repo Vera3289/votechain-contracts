@@ -155,7 +155,7 @@ impl GovernanceContract {
             quorum,
             start_time: now,
             end_time: now + duration,
-            status: ProposalState::Active,
+            state: ProposalState::Active,
         };
         save_proposal(&env, &proposal);
         set_last_proposal(&env, &proposer, now);
@@ -181,7 +181,7 @@ impl GovernanceContract {
         voter.require_auth();
 
         let proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalState::Active {
+        if proposal.state != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
 
@@ -251,7 +251,7 @@ impl GovernanceContract {
     /// - [`ContractError::VotingStillOpen`] if the voting window has not yet closed.
     pub fn finalise(env: Env, proposal_id: u64) -> Result<(), ContractError> {
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalState::Active {
+        if proposal.state != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
         if env.ledger().timestamp() <= proposal.end_time {
@@ -259,7 +259,7 @@ impl GovernanceContract {
         }
 
         let total = proposal.votes_yes + proposal.votes_no + proposal.votes_abstain;
-        proposal.status =
+        proposal.state =
             if total >= proposal.quorum && proposal.votes_yes > proposal.votes_no {
                 ProposalState::Passed
             } else {
@@ -267,7 +267,7 @@ impl GovernanceContract {
             };
 
         save_proposal(&env, &proposal);
-        events::proposal_finalised(&env, proposal_id, &proposal.status);
+        events::proposal_finalised(&env, proposal_id, &proposal.state);
         Ok(())
     }
 
@@ -283,10 +283,10 @@ impl GovernanceContract {
             return Err(ContractError::NotAdmin);
         }
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalState::Passed {
+        if proposal.state != ProposalState::Passed {
             return Err(ContractError::ProposalNotPassed);
         }
-        proposal.status = ProposalState::Executed;
+        proposal.state = ProposalState::Executed;
         save_proposal(&env, &proposal);
         events::proposal_executed(&env, proposal_id);
         Ok(())
@@ -304,10 +304,10 @@ impl GovernanceContract {
             return Err(ContractError::NotAdmin);
         }
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalState::Active {
+        if proposal.state != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
-        proposal.status = ProposalState::Cancelled;
+        proposal.state = ProposalState::Cancelled;
         save_proposal(&env, &proposal);
         events::proposal_cancelled(&env, proposal_id);
         Ok(())
@@ -334,7 +334,7 @@ impl GovernanceContract {
             return Err(ContractError::InvalidQuorum);
         }
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalState::Active {
+        if proposal.state != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
         proposal.quorum = new_quorum;
