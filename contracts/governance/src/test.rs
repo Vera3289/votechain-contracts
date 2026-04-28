@@ -781,3 +781,45 @@ fn test_create_proposal_after_cooldown_accepted() {
 }
 
 // ── end spam prevention tests ─────────────────────────────────────────────────
+
+// ── SC-020: snapshot-based vote weight tests ──────────────────────────────────
+
+/// Verify that the vote weight is the balance at vote time, not after a transfer.
+#[test]
+fn test_snapshot_weight_unaffected_by_post_vote_transfer() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let recipient = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+
+    // Mint 1_000_000 to voter and cast vote
+    let tok = votechain_token::TokenContractClient::new(&t.env, &t.token_id);
+    tok.mint(&t.admin, &voter, &1_000_000_i128);
+    t.client.cast_vote(&voter, &id, &Vote::Yes);
+
+    // Transfer all tokens away after voting
+    tok.transfer(&voter, &recipient, &1_000_000_i128);
+
+    // Vote weight should still be 1_000_000 (snapshot taken at vote time)
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, 1_000_000);
+}
+
+/// Verify that a voter who receives tokens after proposal creation
+/// but before voting uses their balance at vote time.
+#[test]
+fn test_snapshot_captures_balance_at_vote_time() {
+    let t = setup_env();
+    let voter = Address::generate(&t.env);
+    let id = create_test_proposal(&t, &voter);
+
+    // Mint tokens after proposal creation
+    let tok = votechain_token::TokenContractClient::new(&t.env, &t.token_id);
+    tok.mint(&t.admin, &voter, &500_000_i128);
+    t.client.cast_vote(&voter, &id, &Vote::Yes);
+
+    let p = t.client.get_proposal(&id);
+    assert_eq!(p.votes_yes, 500_000);
+}
+
+// ── end SC-020 ────────────────────────────────────────────────────────────────

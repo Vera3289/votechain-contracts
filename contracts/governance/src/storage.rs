@@ -97,6 +97,22 @@ pub fn set_last_proposal(env: &Env, proposer: &Address, ts: u64) {
 pub fn get_last_proposal(env: &Env, proposer: &Address) -> u64 {
     env.storage().persistent().get(&DataKey::LastProposal(proposer.clone())).unwrap_or(0)
 }
+
+/// Records the voter's token balance snapshot for a given proposal.
+/// Called once per voter per proposal at the time of casting their vote.
+pub fn save_voter_snapshot(env: &Env, proposal_id: u64, voter: &Address, weight: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::VoterSnapshot(proposal_id, voter.clone()), &weight);
+}
+
+/// Returns the stored vote-weight snapshot for a voter on a proposal.
+/// Returns `None` if no snapshot has been recorded yet.
+pub fn get_voter_snapshot(env: &Env, proposal_id: u64, voter: &Address) -> Option<i128> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::VoterSnapshot(proposal_id, voter.clone()))
+}
 /// Stores the contract version as a `(major, minor, patch)` tuple.
 pub fn set_version(env: &Env, version: (u32, u32, u32)) {
     env.storage().instance().set(&DataKey::Version, &version);

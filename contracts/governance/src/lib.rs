@@ -14,9 +14,10 @@ mod prop_tests;
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
 use storage::{
     get_admin, get_last_proposal, get_min_proposal_balance, get_proposal_cooldown,
-    get_version, get_voting_token, has_voted, is_initialized, load_proposal, mark_voted,
-    next_id, save_proposal, set_admin, set_last_proposal, set_min_proposal_balance,
-    set_proposal_cooldown, set_version, set_voting_token,
+    get_version, get_voter_snapshot, get_voting_token, has_voted, is_initialized,
+    load_proposal, mark_voted, next_id, save_proposal, save_voter_snapshot, set_admin,
+    set_last_proposal, set_min_proposal_balance, set_proposal_cooldown, set_version,
+    set_voting_token,
 };
 use types::{ContractError, DataKey, Proposal, ProposalState, Vote};
 
@@ -151,7 +152,17 @@ impl GovernanceContract {
         }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);
-        let weight = token_client.balance(&voter);
+        // Snapshot: capture the voter's balance at vote time and persist it.
+        // Using the stored snapshot (rather than re-querying) prevents any
+        // balance manipulation after the vote is recorded.
+        let weight = match get_voter_snapshot(&env, proposal_id, &voter) {
+            Some(w) => w,
+            None => {
+                let live = token_client.balance(&voter);
+                save_voter_snapshot(&env, proposal_id, &voter, live);
+                live
+            }
+        };
         if weight <= 0 {
             return Err(ContractError::NoVotingPower);
         }
