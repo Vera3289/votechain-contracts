@@ -18,7 +18,7 @@ use storage::{
     next_id, save_proposal, set_admin, set_last_proposal, set_min_proposal_balance,
     set_proposal_cooldown, set_version, set_voting_token,
 };
-use types::{ContractError, DataKey, Proposal, ProposalStatus, Vote};
+use types::{ContractError, DataKey, Proposal, ProposalState, Vote};
 
 #[contract]
 pub struct GovernanceContract;
@@ -55,6 +55,9 @@ impl GovernanceContract {
     }
 
     /// Creates a new governance proposal.
+    ///
+    /// # Returns
+    /// The numeric ID assigned to the new proposal.
     ///
     /// # Errors
     /// - [`ContractError::InvalidQuorum`] if `quorum` is zero or negative.
@@ -109,7 +112,7 @@ impl GovernanceContract {
             quorum,
             start_time: now,
             end_time: now + duration,
-            status: ProposalStatus::Active,
+            status: ProposalState::Active,
         };
         save_proposal(&env, &proposal);
         set_last_proposal(&env, &proposer, now);
@@ -118,9 +121,6 @@ impl GovernanceContract {
     }
 
     /// Casts a vote on an active proposal.
-    ///
-    /// Vote weight equals the voter's current governance token balance.
-    /// Each address may vote at most once per proposal.
     ///
     /// # Errors
     /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
@@ -137,8 +137,8 @@ impl GovernanceContract {
     ) -> Result<(), ContractError> {
         voter.require_auth();
 
-        let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalStatus::Active {
+        let proposal = load_proposal(&env, proposal_id)?;
+        if proposal.status != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
 
@@ -156,6 +156,7 @@ impl GovernanceContract {
             return Err(ContractError::NoVotingPower);
         }
 
+        let mut proposal = proposal;
         match vote {
             Vote::Yes => {
                 proposal.votes_yes = proposal
@@ -191,7 +192,7 @@ impl GovernanceContract {
     /// - [`ContractError::VotingStillOpen`] if the voting window has not yet closed.
     pub fn finalise(env: Env, proposal_id: u64) -> Result<(), ContractError> {
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalStatus::Active {
+        if proposal.status != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
         if env.ledger().timestamp() <= proposal.end_time {
@@ -201,9 +202,9 @@ impl GovernanceContract {
         let total = proposal.votes_yes + proposal.votes_no + proposal.votes_abstain;
         proposal.status =
             if total >= proposal.quorum && proposal.votes_yes > proposal.votes_no {
-                ProposalStatus::Passed
+                ProposalState::Passed
             } else {
-                ProposalStatus::Rejected
+                ProposalState::Rejected
             };
 
         save_proposal(&env, &proposal);
@@ -211,7 +212,7 @@ impl GovernanceContract {
         Ok(())
     }
 
-    /// Marks a passed proposal as executed. Only admin may call this.
+    /// Marks a passed proposal as executed. Only the admin may call this.
     ///
     /// # Errors
     /// - [`ContractError::NotAdmin`] if `admin` does not match the stored admin.
@@ -223,16 +224,16 @@ impl GovernanceContract {
             return Err(ContractError::NotAdmin);
         }
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalStatus::Passed {
+        if proposal.status != ProposalState::Passed {
             return Err(ContractError::ProposalNotPassed);
         }
-        proposal.status = ProposalStatus::Executed;
+        proposal.status = ProposalState::Executed;
         save_proposal(&env, &proposal);
-        events::proposal_finalised(&env, proposal_id, &ProposalStatus::Executed);
+        events::proposal_finalised(&env, proposal_id, &ProposalState::Executed);
         Ok(())
     }
 
-    /// Cancels an active proposal. Only admin may call this.
+    /// Cancels an active proposal. Only the admin may cancel.
     ///
     /// # Errors
     /// - [`ContractError::NotAdmin`] if `admin` does not match the stored admin.
@@ -244,16 +245,16 @@ impl GovernanceContract {
             return Err(ContractError::NotAdmin);
         }
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalStatus::Active {
+        if proposal.status != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
-        proposal.status = ProposalStatus::Cancelled;
+        proposal.status = ProposalState::Cancelled;
         save_proposal(&env, &proposal);
-        events::proposal_cancelled(&env, proposal_id);
+        events::proposal_finalised(&env, proposal_id, &ProposalState::Cancelled);
         Ok(())
     }
 
-    /// Updates the quorum threshold of an active proposal. Only admin may call this.
+    /// Updates the quorum threshold of an active proposal. Only the admin may call this.
     ///
     /// # Errors
     /// - [`ContractError::NotAdmin`] if `admin` does not match the stored admin.
@@ -274,7 +275,7 @@ impl GovernanceContract {
             return Err(ContractError::InvalidQuorum);
         }
         let mut proposal = load_proposal(&env, proposal_id)?;
-        if proposal.status != ProposalStatus::Active {
+        if proposal.status != ProposalState::Active {
             return Err(ContractError::ProposalNotActive);
         }
         proposal.quorum = new_quorum;
@@ -283,7 +284,7 @@ impl GovernanceContract {
         Ok(())
     }
 
-    /// Returns the full state of a proposal by ID.
+    /// Returns the full state of a proposal.
     ///
     /// # Errors
     /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
@@ -292,8 +293,6 @@ impl GovernanceContract {
     }
 
     /// Returns the total number of proposals ever created.
-    ///
-    /// Returns `0` before any proposals are created.
     pub fn proposal_count(env: Env) -> u64 {
         env.storage()
             .instance()
@@ -302,8 +301,19 @@ impl GovernanceContract {
     }
 
     /// Returns whether an address has already voted on a given proposal.
-    pub fn has_voted(env: Env, proposal_id: u64, voter: Address) -> bool {
-        has_voted(&env, proposal_id, &voter)
+    ///
+    /// # Returns
+    /// `true` if the address has cast a vote, `false` otherwise.
+    ///
+    /// # Errors
+    /// - [`ContractError::ProposalNotFound`] if `proposal_id` does not exist.
+    pub fn has_voted(
+        env: Env,
+        proposal_id: u64,
+        voter: Address,
+    ) -> Result<bool, ContractError> {
+        load_proposal(&env, proposal_id)?;
+        Ok(has_voted(&env, proposal_id, &voter))
     }
 
     /// Returns the contract version as a `(major, minor, patch)` semver tuple.
