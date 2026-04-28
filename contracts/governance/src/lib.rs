@@ -20,6 +20,9 @@ use storage::{
 };
 use types::{ContractError, DataKey, Proposal, ProposalState, Vote, VoteRecord};
 
+const MAX_TITLE_LEN: u32 = 256;
+const MAX_DESC_LEN: u32 = 4096;
+
 #[contract]
 pub struct GovernanceContract;
 
@@ -78,6 +81,12 @@ impl GovernanceContract {
         }
         if duration == 0 {
             return Err(ContractError::InvalidDuration);
+        }
+        if title.len() > MAX_TITLE_LEN {
+            return Err(ContractError::TitleTooLong);
+        }
+        if description.len() > MAX_DESC_LEN {
+            return Err(ContractError::DescriptionTooLong);
         }
 
         let token_client = token::Client::new(&env, &get_voting_token(&env)?);

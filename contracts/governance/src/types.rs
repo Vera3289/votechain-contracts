@@ -37,6 +37,10 @@ pub enum ContractError {
     InsufficientBalance = 15,
     /// 16 – Proposer must wait for the cooldown period to expire
     ProposalCooldown = 16,
+    /// 17 – Proposal title exceeds maximum byte length
+    TitleTooLong = 17,
+    /// 18 – Proposal description exceeds maximum byte length
+    DescriptionTooLong = 18,
 }
 
 #[contracttype]
